@@ -80,8 +80,3 @@ pytest
    python -m examples.plot_mesh_setup
    ```
 
----
-
-## License
-
-MIT License
