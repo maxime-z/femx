@@ -1,0 +1,27 @@
+# Legacy folders to exclude from GitHub project
+FemJavaNew/
+docs/
+research_topics/
+
+# Python & Environment Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+ENV/
+
+# Output Plots & VTK Files
+examples/*.png
+examples/*.vtu
+*.png
+*.vtu
+
+# OS & IDE Files
+.DS_Store
+.vscode/
+.idea/

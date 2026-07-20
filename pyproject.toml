@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "femx"
+version = "0.1.0"
+description = "Modern Python finite element and isogeometric analysis (IGA) framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Lei Zhang"}
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "matplotlib>=3.5"
+]
+
+[project.optional-dependencies]
+vis = ["pyvista>=0.38"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["femx*"]

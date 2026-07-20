@@ -1,0 +1,55 @@
+import sys
+import traceback
+from tests.test_basis import (
+    test_q1_shape_functions,
+    test_q1_derivatives_fd,
+    test_nurbs_find_span,
+    test_nurbs_basis_partition_of_unity,
+    test_nurbs_2d_mapping
+)
+from tests.test_solvers import (
+    test_single_element_heat_solve,
+    test_dirichlet_variants_agree_and_symmetry,
+)
+from tests.test_patch_test import (
+    test_constant_strain_patch_test
+)
+
+def run_test(name, func):
+    print(f"Running {name:50s}...", end="")
+    try:
+        func()
+        print(" SUCCESS")
+        return True
+    except Exception as e:
+        print(" FAILED")
+        traceback.print_exc()
+        return False
+
+def main():
+    print("=== Executing femx Unit Tests ===")
+    tests = {
+        "test_q1_shape_functions": test_q1_shape_functions,
+        "test_q1_derivatives_fd": test_q1_derivatives_fd,
+        "test_nurbs_find_span": test_nurbs_find_span,
+        "test_nurbs_basis_partition_of_unity": test_nurbs_basis_partition_of_unity,
+        "test_nurbs_2d_mapping": test_nurbs_2d_mapping,
+        "test_single_element_heat_solve": test_single_element_heat_solve,
+        "test_dirichlet_variants_agree_and_symmetry": test_dirichlet_variants_agree_and_symmetry,
+        "test_constant_strain_patch_test": test_constant_strain_patch_test
+    }
+    
+    success = True
+    for name, func in tests.items():
+        if not run_test(name, func):
+            success = False
+            
+    if success:
+        print("\nAll unit tests passed successfully!")
+        sys.exit(0)
+    else:
+        print("\nSome unit tests failed.")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
