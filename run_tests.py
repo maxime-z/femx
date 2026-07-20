@@ -14,6 +14,10 @@ from tests.test_solvers import (
 from tests.test_patch_test import (
     test_constant_strain_patch_test
 )
+from tests.test_tensor_assembly import (
+    test_tensor_vs_traditional_heat_quads,
+    test_tensor_vs_traditional_elasticity
+)
 
 def run_test(name, func):
     print(f"Running {name:50s}...", end="")
@@ -36,7 +40,9 @@ def main():
         "test_nurbs_2d_mapping": test_nurbs_2d_mapping,
         "test_single_element_heat_solve": test_single_element_heat_solve,
         "test_dirichlet_variants_agree_and_symmetry": test_dirichlet_variants_agree_and_symmetry,
-        "test_constant_strain_patch_test": test_constant_strain_patch_test
+        "test_constant_strain_patch_test": test_constant_strain_patch_test,
+        "test_tensor_vs_traditional_heat_quads": test_tensor_vs_traditional_heat_quads,
+        "test_tensor_vs_traditional_elasticity": test_tensor_vs_traditional_elasticity
     }
     
     success = True

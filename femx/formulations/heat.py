@@ -32,6 +32,9 @@ class HeatConductionFormulation(Formulation):
         rho = self.material.get_property("rho")
         C = self.material.get_property("C")
 
+        if body_load is None:
+            body_load = 0.0
+
         for gp, w in zip(quadrature_pts, quadrature_wts):
             if is_nurbs:
                 from femx.basis.nurbs import compute_nurbs_mapping

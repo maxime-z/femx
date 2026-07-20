@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Tuple
-from femx.backends.numpy_backend import ndarray, array, inv, det, zeros
+from femx.backends.numpy_backend import ndarray, array, invert_matrix, determinant, zeros
 
 def evaluate_t1_shape_functions(xi: float, eta: float) -> ndarray:
     """
@@ -42,11 +42,11 @@ def compute_t1_mapping(gp: ndarray, elem_coords: ndarray) -> Tuple[ndarray, ndar
     
     # Jacobian matrix J = dN_dref @ elem_coords (shape (2, 2))
     J = dN_dref @ elem_coords
-    detJ = float(det(J))
+    detJ = float(determinant(J))
     if detJ <= 0.0:
         raise ValueError(f"Non-positive Jacobian determinant det(J) = {detJ} in T1 element.")
         
-    invJ = inv(J)
+    invJ = invert_matrix(J)
     # dN_dphys = inv(J) @ dN_dref (shape (2, 3))
     dN_dphys = invJ @ dN_dref
     
