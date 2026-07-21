@@ -63,3 +63,26 @@ class LinearElasticMaterial(Material):
             return D
         else:
             raise ValueError(f"Unknown elastic mode: {mode}. Must be 'plane_strain', 'plane_stress', or '3d'.")
+
+    def get_elasticity_tensor_4th(self, mode: str = "plane_strain", dim: int = 2) -> ndarray:
+        """
+        Return the true 4th-order elasticity tensor C4 of shape (dim, dim, dim, dim).
+        C4[i, j, k, l] = lambda_star * delta_ij * delta_kl + mu * (delta_ik * delta_jl + delta_il * delta_jk)
+        """
+        E = self.get_property("E")
+        nu = self.get_property("nu")
+        lambda_, mu = self.get_lame_parameters()
+
+        if mode == "plane_stress":
+            lambda_star = (E * nu) / (1.0 - nu**2)
+        else:
+            lambda_star = lambda_
+
+        from numpy import eye, einsum
+        delta = eye(dim)
+        
+        C4 = einsum('ij,kl->ijkl', delta, delta) * lambda_star + (
+            einsum('ik,jl->ijkl', delta, delta) + einsum('il,jk->ijkl', delta, delta)
+        ) * mu
+        
+        return C4

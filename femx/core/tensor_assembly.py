@@ -75,8 +75,8 @@ def compute_batch_map_elasticity(
     
     X = coords[cells] # (E, nen, 2)
     
-    D_np = formulation.material.get_constitutive_matrix(mode=formulation.mode)
-    D = torch.tensor(D_np, dtype=dtype, device=device) # (3, 3)
+    C4_np = formulation.material.get_elasticity_tensor_4th(mode=formulation.mode, dim=2)
+    C4 = torch.tensor(C4_np, dtype=dtype, device=device) # (2, 2, 2, 2)
     
     if nen == 4:
         pts_np, wts_np = get_quadrature_2d(2, 2)
@@ -95,20 +95,15 @@ def compute_batch_map_elasticity(
     detJ = torch.linalg.det(J)
     J_inv_T = torch.linalg.inv(J).transpose(-1, -2)
     
+    # Physical Shape Gradients G -> (E, Q, nen, 2) where G[e, q, a, j] = dN_a / dx_j
     G = torch.einsum('eqcd,qad->eqac', J_inv_T, dB_hat_q)
     
-    B = torch.zeros((E, Q, 3, k_dofs), dtype=dtype, device=device)
-    for a in range(nen):
-        dN_dx = G[:, :, a, 0]
-        dN_dy = G[:, :, a, 1]
-        
-        B[:, :, 0, 2 * a]     = dN_dx
-        B[:, :, 1, 2 * a + 1] = dN_dy
-        B[:, :, 2, 2 * a]     = dN_dy
-        B[:, :, 2, 2 * a + 1] = dN_dx
-        
-    DB = torch.einsum('mn,eqnj->eqmj', D, B)
-    K_local = torch.einsum('q,eq,eqmi,eqmj->eij', W_hat, detJ, B, DB)
+    # Stage I True 4th-Order Physical Tensor Contraction:
+    # K_tensor[e, a, i, b, k] = sum_q ( W[q] * detJ[e, q] * sum_{j, l} ( G[e, q, a, j] * C4[i, j, k, l] * G[e, q, b, l] ) )
+    K_tensor = torch.einsum('q,eq,eqaj,ijkl,eqbl->eaibk', W_hat, detJ, G, C4, G)
+    
+    # Reshape (E, nen, 2, nen, 2) -> (E, 2*nen, 2*nen)
+    K_local = K_tensor.reshape(E, k_dofs, k_dofs)
     F_local = torch.zeros((E, k_dofs), dtype=dtype, device=device)
     
     return K_local, F_local
