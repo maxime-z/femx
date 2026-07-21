@@ -68,3 +68,25 @@ class LinearElasticityFormulation(Formulation):
                     Me[2 * i + 1, 2 * j + 1] += mass_val
                     
         return Ke, Me, fe
+
+    def get_physical_tensors(self, geom, device: str = "cpu", dtype = None):
+        """
+        Return true 4th-order physical elasticity tensor for linear elasticity:
+        - C_4th: 4th-order elasticity tensor of shape (E, Q, dim, dim, dim, dim)
+        - M_0th: 0th-order density scalar of shape (E, Q)
+        - f_body: body force vector of shape (E, Q, dim)
+        """
+        import torch
+        if dtype is None:
+            dtype = torch.float64
+            
+        C4_np = self.material.get_elasticity_tensor_4th(mode=self.mode, dim=geom.dim) # (dim, dim, dim, dim)
+        C_4th = torch.tensor(C4_np, dtype=dtype, device=device).unsqueeze(0).unsqueeze(0).expand(
+            geom.E, geom.Q, geom.dim, geom.dim, geom.dim, geom.dim
+        )
+        
+        rho = self.material.get_property("rho")
+        M_0th = torch.full((geom.E, geom.Q), fill_value=rho, dtype=dtype, device=device)
+        f_body = None
+        
+        return C_4th, M_0th, f_body

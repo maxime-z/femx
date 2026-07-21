@@ -53,3 +53,24 @@ class HeatConductionFormulation(Formulation):
             fe += (body_load * N) * dV
 
         return Ke, Me, fe
+
+    def get_physical_tensors(self, geom, device: str = "cpu", dtype = None):
+        """
+        Return true physical material tensors for heat conduction:
+        - K_2nd: 2nd-order conductivity tensor of shape (E, Q, dim, dim)
+        - M_0th: 0th-order capacity scalar of shape (E, Q)
+        - f_body: body load tensor of shape (E, Q)
+        """
+        import torch
+        if dtype is None:
+            dtype = torch.float64
+            
+        K_np = self.material.get_constitutive_matrix(dim=geom.dim) # (dim, dim)
+        K_2nd = torch.tensor(K_np, dtype=dtype, device=device).unsqueeze(0).unsqueeze(0).expand(geom.E, geom.Q, geom.dim, geom.dim)
+        
+        rho = self.material.get_property("rho")
+        C_cap = self.material.get_property("C")
+        M_0th = torch.full((geom.E, geom.Q), fill_value=rho * C_cap, dtype=dtype, device=device)
+        f_body = None
+        
+        return K_2nd, M_0th, f_body
