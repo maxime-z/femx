@@ -119,11 +119,50 @@ def main():
     print(f"Maximum von Mises stress: {max_vm:8.5f}")
     
     # 9. Plot and export results
-    print("\nSaving von Mises stress plot to examples/cooks_membrane_vm.png...")
-    ax = mesh.plot(values=result.nodal_von_mises, title="Cook's Membrane von Mises Stress")
-    plt.savefig("examples/cooks_membrane_vm.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
+    from femx.visualization.matplotlib_vis import (
+        plot_boundary_conditions, plot_scalar_field_2d, plot_deformed_mesh
+    )
+
+    # Neumann point force dictionary for visualization
+    neumann_dict = {}
+    for node in mesh.boundaries["right"]:
+        dof_y = dof_map.get_dof("u", node, 1)
+        neumann_dict[dof_y] = t_y
+
+    # 1. Problem Setup & Boundary Conditions Plot
+    fig1, ax1 = plt.subplots(figsize=(7, 6))
+    plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, neumann_forces=neumann_dict, ax=ax1)
+    ax1.set_title("Cook's Membrane Setup & Boundary Conditions")
+    fig1.tight_layout()
+    fig1.savefig("examples/cooks_membrane_setup.png", dpi=200)
+    print("Saved: examples/cooks_membrane_setup.png")
+
+    N = mesh.n_nodes
+    ux_vals = np.array([U[dof_map.get_dof("u", i, 0)] for i in range(N)])
+    uy_vals = np.array([U[dof_map.get_dof("u", i, 1)] for i in range(N)])
+    disp_norm = np.sqrt(ux_vals**2 + uy_vals**2)
+
+    # 2. All Field Solutions Grid Plot
+    fig2, axes = plt.subplots(2, 2, figsize=(12, 10))
+    plot_scalar_field_2d(mesh, ux_vals, title="Horizontal Displacement u_x", ax=axes[0, 0])
+    plot_scalar_field_2d(mesh, uy_vals, title="Vertical Displacement u_y", ax=axes[0, 1])
+    plot_scalar_field_2d(mesh, disp_norm, title="Displacement Magnitude ||u||", ax=axes[1, 0])
+    plot_scalar_field_2d(mesh, result.nodal_von_mises, title="von Mises Stress sigma_vm", ax=axes[1, 1])
+    fig2.suptitle("Cook's Membrane Field Solutions (u, sigma)", fontsize=14, fontweight='bold')
+    fig2.tight_layout()
+    fig2.savefig("examples/cooks_membrane_fields.png", dpi=200)
+    print("Saved: examples/cooks_membrane_fields.png")
+
+    # 3. Initial Frame vs Deformed Frame Plots
+    fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(8, 12))
+    plot_deformed_mesh(mesh, U, dof_map, scale=0.5, field_values=disp_norm, field_title="Displacement Magnitude ||u||", ax=ax3a)
+    plot_deformed_mesh(mesh, U, dof_map, scale=0.5, field_values=result.nodal_von_mises, field_title="von Mises Stress", ax=ax3b)
+    fig3.tight_layout()
+    fig3.savefig("examples/cooks_membrane_deformed.png", dpi=200)
+    print("Saved: examples/cooks_membrane_deformed.png")
+
+    plt.close('all')
+
     u_vector = U.reshape((-1, 2))
     try:
         export_to_vtk(mesh, "examples/cooks_membrane_solution.vtu", u_vector, "Displacement")

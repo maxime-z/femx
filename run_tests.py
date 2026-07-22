@@ -18,6 +18,11 @@ from tests.test_tensor_assembly import (
     test_tensor_vs_traditional_heat_quads,
     test_tensor_vs_traditional_elasticity
 )
+from tests.test_thermoelasticity import (
+    test_thermoelastic_block_matrices,
+    test_constrained_thermal_expansion,
+    test_unconstrained_thermal_expansion
+)
 
 def run_test(name, func):
     print(f"Running {name:50s}...", end="")
@@ -42,7 +47,10 @@ def main():
         "test_dirichlet_variants_agree_and_symmetry": test_dirichlet_variants_agree_and_symmetry,
         "test_constant_strain_patch_test": test_constant_strain_patch_test,
         "test_tensor_vs_traditional_heat_quads": test_tensor_vs_traditional_heat_quads,
-        "test_tensor_vs_traditional_elasticity": test_tensor_vs_traditional_elasticity
+        "test_tensor_vs_traditional_elasticity": test_tensor_vs_traditional_elasticity,
+        "test_thermoelastic_block_matrices": test_thermoelastic_block_matrices,
+        "test_constrained_thermal_expansion": test_constrained_thermal_expansion,
+        "test_unconstrained_thermal_expansion": test_unconstrained_thermal_expansion
     }
     
     success = True

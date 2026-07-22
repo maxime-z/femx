@@ -92,14 +92,52 @@ def main():
         print(f"{node:7d} | ({x:3.2f}, {y:3.2f})   | {ux:8.5f} | {uy:8.5f}")
 
     # 8. Visualization and VTK Export
-    print("\nSaving displacement Y plot to examples/elasticity_q1_disp_y.png...")
     import matplotlib.pyplot as plt
-    u_y = u_sol[1::2] # extract Y-displacements
-    ax = mesh.plot(values=u_y, title="Vertical Displacement (Disp Y)")
-    plt.savefig("examples/elasticity_q1_disp_y.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Reshape displacements to vector field (shape (N, 2)) for VTK export
+    from femx.visualization.matplotlib_vis import (
+        plot_boundary_conditions, plot_scalar_field_2d, plot_deformed_mesh
+    )
+    from femx.core.postprocessing import compute_element_stresses
+
+    neumann_dict = {}
+    for node in mesh.boundaries["right"]:
+        dof_y = dof_map.get_dof("u", node, 1)
+        neumann_dict[dof_y] = F_y_node
+
+    # 1. Problem Setup & Boundary Conditions Plot
+    fig1, ax1 = plt.subplots(figsize=(8, 3))
+    plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, neumann_forces=neumann_dict, ax=ax1)
+    ax1.set_title("Cantilever Beam Setup & Boundary Conditions")
+    fig1.tight_layout()
+    fig1.savefig("examples/elasticity_q1_setup.png", dpi=200)
+    print("  Saved: examples/elasticity_q1_setup.png")
+
+    N = mesh.n_nodes
+    ux_vals = np.array([u_sol[dof_map.get_dof("u", i, 0)] for i in range(N)])
+    uy_vals = np.array([u_sol[dof_map.get_dof("u", i, 1)] for i in range(N)])
+    disp_norm = np.sqrt(ux_vals**2 + uy_vals**2)
+    post_res = compute_element_stresses(mesh, dof_map, formulation, u_sol)
+
+    # 2. All Field Solutions Grid Plot
+    fig2, axes = plt.subplots(2, 2, figsize=(12, 6))
+    plot_scalar_field_2d(mesh, ux_vals, title="Horizontal Displacement u_x", ax=axes[0, 0])
+    plot_scalar_field_2d(mesh, uy_vals, title="Vertical Displacement u_y", ax=axes[0, 1])
+    plot_scalar_field_2d(mesh, disp_norm, title="Displacement Magnitude ||u||", ax=axes[1, 0])
+    plot_scalar_field_2d(mesh, post_res.nodal_von_mises, title="von Mises Stress sigma_vm", ax=axes[1, 1])
+    fig2.suptitle("Cantilever Beam Field Solutions", fontsize=14, fontweight='bold')
+    fig2.tight_layout()
+    fig2.savefig("examples/elasticity_q1_fields.png", dpi=200)
+    print("  Saved: examples/elasticity_q1_fields.png")
+
+    # 3. Initial Frame vs Deformed Frame Plots
+    fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(10, 6))
+    plot_deformed_mesh(mesh, u_sol, dof_map, scale=100.0, field_values=disp_norm, field_title="Displacement Magnitude ||u||", ax=ax3a)
+    plot_deformed_mesh(mesh, u_sol, dof_map, scale=100.0, field_values=post_res.nodal_von_mises, field_title="von Mises Stress", ax=ax3b)
+    fig3.tight_layout()
+    fig3.savefig("examples/elasticity_q1_deformed.png", dpi=200)
+    print("  Saved: examples/elasticity_q1_deformed.png")
+
+    plt.close('all')
+
     u_vector = u_sol.reshape((-1, 2))
     try:
         from femx.visualization.pyvista_vis import export_to_vtk

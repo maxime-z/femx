@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 import torch
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Union, List
 from femx.core.mesh import Mesh
 from femx.core.dofs import DofMap
 
@@ -25,16 +25,22 @@ class RoutingData:
         self.n_elements = n_elements
         self.k = k
 
-def build_routing_matrices(mesh: Mesh, dof_map: DofMap, field_name: str, device: str = "cpu", dtype: torch.dtype = torch.float64) -> RoutingData:
+def build_routing_matrices(mesh: Mesh, dof_map: DofMap, field_name: Union[str, List[str]], device: str = "cpu", dtype: torch.dtype = torch.float64) -> RoutingData:
     """
     Precompute binary topology routing matrices S_vec and S_mat based on mesh connectivity.
+    field_name can be a single field name or a list of coupled field names (e.g. ['u', 'T']).
     """
     n_elements = mesh.n_elements
     n_dofs = dof_map.n_dofs
     cells = mesh.cells
     
+    if isinstance(field_name, list):
+        field_names = field_name
+    else:
+        field_names = [field_name]
+        
     # 1. Determine local DoFs count k for one element
-    sample_elem_dofs = dof_map.get_element_dofs(field_name, cells[0])
+    sample_elem_dofs = dof_map.get_element_dofs_multi(field_names, cells[0])
     k = len(sample_elem_dofs)
     
     # 2. Build S_vec routing: maps (E * k) flattened local force vector entries to N global DoFs
@@ -42,7 +48,7 @@ def build_routing_matrices(mesh: Mesh, dof_map: DofMap, field_name: str, device:
     vec_cols = []
     
     for e in range(n_elements):
-        elem_dofs = dof_map.get_element_dofs(field_name, cells[e])
+        elem_dofs = dof_map.get_element_dofs_multi(field_names, cells[e])
         for a in range(k):
             g_dof = elem_dofs[a]
             flat_idx = e * k + a
@@ -58,7 +64,7 @@ def build_routing_matrices(mesh: Mesh, dof_map: DofMap, field_name: str, device:
     flat_k_indices = []
     
     for e in range(n_elements):
-        elem_dofs = dof_map.get_element_dofs(field_name, cells[e])
+        elem_dofs = dof_map.get_element_dofs_multi(field_names, cells[e])
         for a in range(k):
             g_row = elem_dofs[a]
             for b in range(k):

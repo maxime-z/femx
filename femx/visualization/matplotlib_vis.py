@@ -152,6 +152,64 @@ def plot_scalar_field_2d(mesh: Mesh, values: ndarray, title: str = "Scalar Field
     ax.set_title(title)
     return ax
 
+def plot_deformed_mesh(
+    mesh: Mesh,
+    u_vector: ndarray,
+    dof_map: DofMap,
+    scale: float = 1.0,
+    field_values: ndarray = None,
+    field_title: str = "Deformed Mesh",
+    cmap: str = "coolwarm",
+    ax = None
+):
+    """
+    Plot initial mesh outline (dashed) vs deformed mesh (solid), optionally overlaid with field values (e.g. von Mises stress, temperature).
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 6))
+        
+    coords = mesh.coords
+    cells = mesh.cells
+    N = len(coords)
+    
+    # Extract displacement vector [ux, uy] per node
+    ux = np.array([u_vector[dof_map.get_dof("u", i, 0)] for i in range(N)])
+    uy = np.array([u_vector[dof_map.get_dof("u", i, 1)] for i in range(N)])
+    disp = np.vstack([ux, uy]).T
+    deformed_coords = coords + scale * disp
+    
+    # 1. Plot initial mesh outline (dashed light gray)
+    init_polys = [coords[cell] for cell in cells]
+    init_pc = PolyCollection(init_polys, edgecolors='#a8dadc', facecolors='none', linestyles='dashed', linewidths=1.0, alpha=0.7, label='Initial Frame')
+    ax.add_collection(init_pc)
+    
+    # 2. Plot deformed mesh
+    def_polys = [deformed_coords[cell] for cell in cells]
+    
+    if field_values is not None:
+        # Plot scalar field on deformed mesh
+        import matplotlib.tri as tri
+        triangles = []
+        for cell in cells:
+            triangles.append([cell[0], cell[1], cell[2]])
+            triangles.append([cell[0], cell[2], cell[3]])
+        triangulation = tri.Triangulation(deformed_coords[:, 0], deformed_coords[:, 1], np.array(triangles))
+        cf = ax.tricontourf(triangulation, field_values.ravel(), cmap=cmap, levels=20)
+        plt.colorbar(cf, ax=ax, label=field_title)
+        def_pc = PolyCollection(def_polys, edgecolors='black', facecolors='none', linewidths=0.6, alpha=0.6, label='Deformed Frame')
+        ax.add_collection(def_pc)
+    else:
+        def_pc = PolyCollection(def_polys, edgecolors='#1d3557', facecolors='#f1faee', linewidths=1.2, alpha=0.8, label='Deformed Frame')
+        ax.add_collection(def_pc)
+        
+    ax.autoscale_view()
+    ax.set_aspect('equal')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_title(f"{field_title} (Deformation Scale: {scale:.1f}x)")
+    ax.legend(loc='upper right')
+    return ax
+
 def plot_nurbs_geometry(patch: NurbsPatch, show_control_grid: bool = True, ax = None):
     """
     Plot IGA NURBS geometry boundaries and the control grid net.

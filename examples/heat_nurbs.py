@@ -98,12 +98,27 @@ def main():
         print(f"{cp_idx:5d} | ({x:3.2f}, {y:3.2f})   | {T_sol[cp_idx]:8.4f}")
 
     # 7. Visualization and VTK Export
-    print("\nSaving NURBS contour plot to examples/heat_nurbs_solution.png...")
-    # Using the bound .plot() method on NurbsPatch
-    ax = patch.plot(values=T_sol, title="Temperature Field (NURBS IGA)")
-    plt.savefig("examples/heat_nurbs_solution.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
+    from femx.visualization.matplotlib_vis import (
+        plot_nurbs_geometry, plot_nurbs_scalar_field_2d
+    )
+
+    # 1. Problem Setup Plot
+    fig1, ax1 = plt.subplots(figsize=(6, 5))
+    plot_nurbs_geometry(patch, show_control_grid=True, ax=ax1)
+    ax1.set_title("NURBS Patch Geometry & Control Grid Setup")
+    fig1.tight_layout()
+    fig1.savefig("examples/heat_nurbs_setup.png", dpi=200)
+    print("  Saved: examples/heat_nurbs_setup.png")
+
+    # 2. Field Solution Contour Plot
+    fig2, ax2 = plt.subplots(figsize=(6, 5))
+    plot_nurbs_scalar_field_2d(patch, T_sol, title="Temperature Field T (°C) (NURBS IGA)", ax=ax2)
+    fig2.tight_layout()
+    fig2.savefig("examples/heat_nurbs_fields.png", dpi=200)
+    print("  Saved: examples/heat_nurbs_fields.png")
+
+    plt.close('all')
+
     try:
         from femx.visualization.pyvista_vis import export_to_vtk
         export_to_vtk(patch, "examples/heat_nurbs_solution.vtu", T_sol, "Temperature")

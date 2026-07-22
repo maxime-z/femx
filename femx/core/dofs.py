@@ -61,3 +61,12 @@ class DofMap:
             dofs[c::C] = offset + entity_indices * C + c
             
         return dofs
+
+    def get_element_dofs_multi(self, field_names: List[str], entity_indices: ndarray) -> ndarray:
+        """
+        Get combined global DOF indices for a list of coupled fields in an element.
+        Concatenates elemental DOF arrays for each field in order.
+        """
+        dof_arrays = [self.get_element_dofs(fn, entity_indices) for fn in field_names]
+        return np.concatenate(dof_arrays)
+

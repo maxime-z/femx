@@ -98,12 +98,35 @@ def main():
         print(f"{node:7d} | ({x:3.2f}, {y:3.2f})   | {T_sol[node]:8.4f}")
 
     # 7. Visualization and VTK Export
-    print("\nSaving contour plot to examples/heat_q1_solution.png...")
-    # Using the bound .plot() method on Mesh
-    ax = mesh.plot(values=T_sol, title="Temperature Field (Q1 FEM)")
-    plt.savefig("examples/heat_q1_solution.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
+    from femx.visualization.matplotlib_vis import (
+        plot_boundary_conditions, plot_scalar_field_2d, plot_mesh
+    )
+
+    # 1. Problem Setup & BCs Plot
+    fig1, ax1 = plt.subplots(figsize=(6, 5))
+    plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, ax=ax1)
+    ax1.set_title("Heat Conduction Setup & Boundary Conditions")
+    fig1.tight_layout()
+    fig1.savefig("examples/heat_q1_setup.png", dpi=200)
+    print("  Saved: examples/heat_q1_setup.png")
+
+    # 2. Field Solution Contour Plot
+    fig2, ax2 = plt.subplots(figsize=(6, 5))
+    plot_scalar_field_2d(mesh, T_sol, title="Temperature Field T (°C)", ax=ax2)
+    fig2.tight_layout()
+    fig2.savefig("examples/heat_q1_fields.png", dpi=200)
+    print("  Saved: examples/heat_q1_fields.png")
+
+    # 3. Initial Frame View Overlaid with Mesh & Solution
+    fig3, ax3 = plt.subplots(figsize=(6, 5))
+    plot_mesh(mesh, show_nodes=True, ax=ax3)
+    plot_scalar_field_2d(mesh, T_sol, title="Initial Frame Mesh & Temperature Field", ax=ax3)
+    fig3.tight_layout()
+    fig3.savefig("examples/heat_q1_frame.png", dpi=200)
+    print("  Saved: examples/heat_q1_frame.png")
+
+    plt.close('all')
+
     try:
         from femx.visualization.pyvista_vis import export_to_vtk
         export_to_vtk(mesh, "examples/heat_q1_solution.vtu", T_sol, "Temperature")

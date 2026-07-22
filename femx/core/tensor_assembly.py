@@ -9,6 +9,7 @@ from femx.core.routing import RoutingData, build_routing_matrices
 from femx.core.tensor_geometry import BatchedGeometry, evaluate_batched_geometry
 from femx.formulations.heat import HeatConductionFormulation
 from femx.formulations.elasticity import LinearElasticityFormulation
+from femx.formulations.thermoelasticity import LinearThermoelasticityFormulation
 
 def compute_batch_map_unified(
     mesh: Mesh,
@@ -39,6 +40,33 @@ def compute_batch_map_unified(
         K_tensor = torch.einsum('q,eq,eqaj,eqijkl,eqbl->eaibk', geom.W_hat, geom.detJ, geom.G, C_4th, geom.G)
         K_local = K_tensor.reshape(geom.E, k_dofs, k_dofs)
         F_local = torch.zeros((geom.E, k_dofs), dtype=dtype, device=device)
+    elif isinstance(formulation, LinearThermoelasticityFormulation):
+        C_4th, M_th, K_th, M_0th, T0 = tensors
+        u_dofs = geom.nen * geom.dim
+        T_dofs = geom.nen
+        total_dofs = u_dofs + T_dofs
+
+        # 1. K_uu (4th-order mechanical contraction)
+        K_uu_tensor = torch.einsum('q,eq,eqaj,eqijkl,eqbl->eaibk', geom.W_hat, geom.detJ, geom.G, C_4th, geom.G)
+        K_uu = K_uu_tensor.reshape(geom.E, u_dofs, u_dofs)
+
+        # 2. K_uT (2nd-order thermal coupling contraction: G_aj * M_th_ij * N_b)
+        K_uT_tensor = - torch.einsum('q,eq,eqaj,eqij,qb->eaib', geom.W_hat, geom.detJ, geom.G, M_th, geom.B_hat)
+        K_uT = K_uT_tensor.reshape(geom.E, u_dofs, T_dofs)
+
+        # 3. K_TT (2nd-order thermal conductivity contraction)
+        K_TT = torch.einsum('q,eq,eqai,eqij,eqbj->eab', geom.W_hat, geom.detJ, geom.G, K_th, geom.G)
+
+        # Assemble block matrix
+        K_local = torch.zeros((geom.E, total_dofs, total_dofs), dtype=dtype, device=device)
+        K_local[:, 0:u_dofs, 0:u_dofs] = K_uu
+        K_local[:, 0:u_dofs, u_dofs:total_dofs] = K_uT
+        K_local[:, u_dofs:total_dofs, u_dofs:total_dofs] = K_TT
+
+        F_local = torch.zeros((geom.E, total_dofs), dtype=dtype, device=device)
+        if abs(T0) > 1e-12:
+            T0_vec = torch.full((geom.E, T_dofs), fill_value=T0, dtype=dtype, device=device)
+            F_local[:, 0:u_dofs] -= torch.einsum('eij,ej->ei', K_uT, T0_vec)
     else:
         raise TypeError(f"Unsupported formulation: {type(formulation)}")
         
@@ -54,7 +82,7 @@ def compute_batch_map_elasticity(mesh: Mesh, formulation: LinearElasticityFormul
 def assemble_system_tensor(
     dof_map: DofMap,
     formulation,
-    field_name: str,
+    field_name: str = None,
     routing: RoutingData = None,
     device: str = "cpu",
     dtype: torch.dtype = torch.float64
@@ -64,6 +92,12 @@ def assemble_system_tensor(
     """
     mesh = dof_map.geometry
     
+    if field_name is None:
+        if hasattr(formulation, "field_names"):
+            field_name = formulation.field_names
+        else:
+            raise ValueError("Must specify field_name or formulation must specify field_names")
+            
     # 1. Precompute or retrieve RoutingData for Stage II
     if routing is None:
         routing = build_routing_matrices(mesh, dof_map, field_name, device=device, dtype=dtype)

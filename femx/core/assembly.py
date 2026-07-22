@@ -5,21 +5,25 @@ from femx.core.mesh import Mesh, NurbsPatch
 from femx.core.quadrature import get_quadrature_2d
 from femx.formulations.base import Formulation
 
-def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str, body_load=None):
+def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str = None, body_load=None):
     """
     Assemble the global stiffness matrix K, mass matrix M, and force vector f.
     Args:
         dof_map: DofMap mapping degrees of freedom to equations
-        formulation: Physical formulation (HeatConductionFormulation or LinearElasticityFormulation)
-        field_name: Name of the primary field (e.g. 'T' or 'u')
-        body_load: Scalar (heat source) or vector (gravity load) body term
-    Returns:
-        K_global: Global stiffness matrix as a scipy.sparse.csr_matrix
-        M_global: Global mass matrix as a scipy.sparse.csr_matrix
-        f_global: Global load vector (numpy array)
+        formulation: Physical formulation (single-field or coupled multi-field)
+        field_name: Name of field (if single field) or None (if formulation specifies field_names)
+        body_load: Body load/forcing term
     """
     n_dofs = dof_map.n_dofs
     geometry = dof_map.geometry
+
+    # Determine field names list
+    if hasattr(formulation, "field_names") and isinstance(formulation.field_names, list):
+        field_names = formulation.field_names
+    elif field_name is not None:
+        field_names = [field_name]
+    else:
+        raise ValueError("Must provide field_name or use a formulation with field_names defined.")
     
     rows = []
     cols = []
@@ -35,12 +39,11 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str, 
         # Q1 FEM Mesh Assembly
         cells = geometry.cells
         coords = geometry.coords
-        # Q1 elements use 2x2 Gauss-Legendre quadrature
         quad_pts, quad_wts = get_quadrature_2d(2, 2)
         
         for elem_idx, cell in enumerate(cells):
             elem_coords = coords[cell]  # shape (4, 2)
-            elem_dofs = dof_map.get_element_dofs(field_name, cell)
+            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
             
             # Compute element matrices
             Ke, Me, fe = formulation.compute_element_matrices(
@@ -73,7 +76,7 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str, 
         for span_u, span_v in spans:
             cell = geometry.get_element_control_points(span_u, span_v)
             elem_coords = flat_cp_coords[cell]
-            elem_dofs = dof_map.get_element_dofs(field_name, cell)
+            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
             
             # Compute element matrices (using the is_nurbs flag)
             Ke, Me, fe = formulation.compute_element_matrices(
