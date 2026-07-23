@@ -57,7 +57,7 @@ def test_thermoelastic_block_matrices():
     diff = np.max(np.abs(K_tens.toarray() - K_trad.toarray()))
     rel_diff = diff / np.max(np.abs(K_trad.toarray()))
     assert rel_diff < 1e-12, f"Relative difference in coupled K matrix is {rel_diff}"
-    print("test_thermoelastic_block_matrices passed successfully!")
+    # print("test_thermoelastic_block_matrices passed successfully!")
 
 def test_constrained_thermal_expansion():
     """
@@ -126,7 +126,7 @@ def test_constrained_thermal_expansion():
     thermal_stress = - m_th * deltaT  # [-171428571.4, -171428571.4, 0]
     
     assert np.isclose(thermal_stress[0], sigma_analytical), f"{thermal_stress[0]} vs {sigma_analytical}"
-    print("test_constrained_thermal_expansion passed successfully!")
+    # print("test_constrained_thermal_expansion passed successfully!")
 
 def test_unconstrained_thermal_expansion():
     """
@@ -178,7 +178,7 @@ def test_unconstrained_thermal_expansion():
     u_expected = L * alpha_val * deltaT  # 6.0e-4
     assert np.isclose(u_x_right, u_expected, rtol=1e-5), f"u_x right is {u_x_right}, expected {u_expected}"
     assert np.isclose(u_y_top, u_expected, rtol=1e-5), f"u_y top is {u_y_top}, expected {u_expected}"
-    print("test_unconstrained_thermal_expansion passed successfully!")
+    # print("test_unconstrained_thermal_expansion passed successfully!")
 
 if __name__ == "__main__":
     test_thermoelastic_block_matrices()

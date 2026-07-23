@@ -18,8 +18,8 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str =
     geometry = dof_map.geometry
 
     # Determine field names list
-    if hasattr(formulation, "field_names") and isinstance(formulation.field_names, list):
-        field_names = formulation.field_names
+    if hasattr(formulation, "field_names") and formulation.field_names is not None:
+        field_names = list(formulation.field_names)
     elif field_name is not None:
         field_names = [field_name]
     else:

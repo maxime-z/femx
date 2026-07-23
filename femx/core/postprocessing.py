@@ -6,7 +6,7 @@ from femx.core.mesh import Mesh, NurbsPatch
 from femx.core.dofs import DofMap
 from femx.core.quadrature import get_quadrature_2d
 from femx.formulations.elasticity import LinearElasticityFormulation
-from femx.basis.lagrange import compute_q1_mapping
+from femx.basis.lagrange import LagrangeQuad
 
 @dataclass
 class PostprocessResult:
@@ -43,6 +43,8 @@ def compute_element_stresses(
     quad_pts, quad_wts = get_quadrature_2d(2, 2)
     n_gps = len(quad_pts)
     
+    basis = LagrangeQuad(p=1)
+    
     D = formulation.material.get_constitutive_matrix(mode=formulation.mode)
     
     gauss_strains = zeros((n_elements, n_gps, 3))
@@ -58,7 +60,7 @@ def compute_element_stresses(
         u_elem = U[elem_dofs] # shape (8,)
         
         for q_idx, (gp, w) in enumerate(zip(quad_pts, quad_wts)):
-            N, dN_dphys, detJ = compute_q1_mapping(gp, elem_coords)
+            N, dN_dphys, detJ = basis.compute_mapping(gp, elem_coords)
             
             # Construct B matrix (3, 8)
             B = zeros((3, 8))

@@ -3,8 +3,7 @@ import torch
 from typing import Tuple
 from femx.core.mesh import Mesh
 from femx.core.quadrature import get_quadrature_2d, get_quadrature_triangle
-from femx.basis.lagrange import evaluate_q1_shape_functions, evaluate_q1_shape_derivatives_ref
-from femx.basis.triangle import evaluate_t1_shape_functions, evaluate_t1_shape_derivatives_ref
+from femx.basis.lagrange import LagrangeQuad, LagrangeTriangle
 
 class BatchedGeometry:
     """Container for physics-independent batched mesh geometric quantities."""
@@ -49,15 +48,17 @@ def evaluate_batched_geometry(mesh: Mesh, device: str = "cpu", dtype: torch.dtyp
         # Q1 Quad: 2x2 quadrature (Q=4)
         pts_np, wts_np = get_quadrature_2d(2, 2)
         Q = len(pts_np)
-        B_hat_list = [evaluate_q1_shape_functions(pt[0], pt[1]) for pt in pts_np]
-        dB_hat_list = [evaluate_q1_shape_derivatives_ref(pt[0], pt[1]) for pt in pts_np]
+        basis = LagrangeQuad(p=1)
+        B_hat_list = [basis.evaluate_shape_functions(pt) for pt in pts_np]
+        dB_hat_list = [basis.evaluate_shape_derivatives(pt) for pt in pts_np]
         dB_hat_q = torch.tensor(np.array([dB.T for dB in dB_hat_list]), dtype=dtype, device=device) # (Q, nen, dim)
     else:
         # T1 Triangle: 1-point centroid rule (Q=1)
         pts_np, wts_np = get_quadrature_triangle(1)
         Q = len(pts_np)
-        B_hat_list = [evaluate_t1_shape_functions(pt[0], pt[1]) for pt in pts_np]
-        dB_hat_list = [evaluate_t1_shape_derivatives_ref() for pt in pts_np]
+        basis = LagrangeTriangle(p=1)
+        B_hat_list = [basis.evaluate_shape_functions(pt) for pt in pts_np]
+        dB_hat_list = [basis.evaluate_shape_derivatives(pt) for pt in pts_np]
         dB_hat_q = torch.tensor(np.array([dB.T for dB in dB_hat_list]), dtype=dtype, device=device) # (Q, nen, dim)
         
     B_hat = torch.tensor(np.array(B_hat_list), dtype=dtype, device=device) # (Q, nen)

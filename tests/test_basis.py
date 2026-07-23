@@ -1,36 +1,38 @@
 import numpy as np
 from femx.backends.numpy_backend import array
 from femx.core.mesh import NurbsPatch
-from femx.basis.lagrange import evaluate_q1_shape_functions, evaluate_q1_shape_derivatives_ref, compute_q1_mapping
+from femx.basis.lagrange import LagrangeQuad
 from femx.basis.nurbs import find_span, ders_basis_functions, compute_nurbs_mapping
 
 def test_q1_shape_functions():
+    elem = LagrangeQuad(p=1)
     # At center (0, 0), all shape functions should be 0.25
-    N = evaluate_q1_shape_functions(0.0, 0.0)
+    N = elem.evaluate_shape_functions(array([0.0, 0.0]))
     assert np.allclose(N, 0.25)
     
     # Check partition of unity at random points
     for xi in np.linspace(-1, 1, 5):
         for eta in np.linspace(-1, 1, 5):
-            N = evaluate_q1_shape_functions(xi, eta)
+            N = elem.evaluate_shape_functions(array([xi, eta]))
             assert np.isclose(np.sum(N), 1.0)
 
 def test_q1_derivatives_fd():
+    elem = LagrangeQuad(p=1)
     # Compare analytical reference derivatives to central finite differences
     h = 1e-6
     for xi in np.linspace(-0.8, 0.8, 4):
         for eta in np.linspace(-0.8, 0.8, 4):
             # Analytical
-            dN_dref = evaluate_q1_shape_derivatives_ref(xi, eta)
+            dN_dref = elem.evaluate_shape_derivatives(array([xi, eta]))
             
             # FD for xi
-            N_plus = evaluate_q1_shape_functions(xi + h, eta)
-            N_minus = evaluate_q1_shape_functions(xi - h, eta)
+            N_plus = elem.evaluate_shape_functions(array([xi + h, eta]))
+            N_minus = elem.evaluate_shape_functions(array([xi - h, eta]))
             dN_dxi_fd = (N_plus - N_minus) / (2.0 * h)
             
             # FD for eta
-            N_plus = evaluate_q1_shape_functions(xi, eta + h)
-            N_minus = evaluate_q1_shape_functions(xi, eta - h)
+            N_plus = elem.evaluate_shape_functions(array([xi, eta + h]))
+            N_minus = elem.evaluate_shape_functions(array([xi, eta - h]))
             dN_deta_fd = (N_plus - N_minus) / (2.0 * h)
             
             assert np.allclose(dN_dref[0], dN_dxi_fd, atol=1e-5)

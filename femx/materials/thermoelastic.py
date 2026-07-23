@@ -52,6 +52,11 @@ class LinearThermoelasticMaterial(Material):
         else:
             raise ValueError(f"Unknown elastic mode: {mode}")
 
+    def get_thermal_conductivity_matrix(self, dim: int = 2) -> ndarray:
+        """Return 2nd-order thermal conductivity tensor K_th of shape (dim, dim)."""
+        K_th = self.get_property("K_th")
+        return K_th * eye(dim)
+
     def get_elasticity_tensor_4th(self, mode: str = "plane_strain", dim: int = 2) -> ndarray:
         """Return 4th-order elasticity tensor C4 of shape (dim, dim, dim, dim)."""
         E = self.get_property("E")
@@ -110,3 +115,6 @@ class LinearThermoelasticMaterial(Material):
             raise ValueError(f"Unknown elastic mode: {mode}")
 
         return beta * eye(dim)
+
+    def get_thermal_coupling_tensor_2nd(self, mode: str = "plane_strain", dim: int = 2) -> ndarray:
+        return self.get_thermal_coupling_tensor(mode=mode, dim=dim)

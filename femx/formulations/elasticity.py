@@ -1,13 +1,17 @@
+from typing import ClassVar, Tuple, Optional
 from femx.formulations.base import Formulation
 from femx.backends.numpy_backend import ndarray, zeros
 from femx.materials.linear_elastic import LinearElasticMaterial
+from femx.basis.element import ElementBasis
 
-class LinearElasticityFormulation(Formulation):
+class LinearElasticityFormulation(Formulation[LinearElasticMaterial]):
     """
     Formulation for 2D linear elasticity (Plane Strain or Plane Stress).
     """
+    field_names: ClassVar[Tuple[str, ...]] = ("u",)
+
     def __init__(self, material: LinearElasticMaterial, mode: str = "plane_strain"):
-        self.material = material
+        super().__init__(material)
         self.mode = mode
 
     def compute_element_matrices(
@@ -16,14 +20,13 @@ class LinearElasticityFormulation(Formulation):
         quadrature_pts: ndarray,
         quadrature_wts: ndarray,
         body_load: ndarray = None,
+        elem_basis: Optional[ElementBasis] = None,
         is_nurbs: bool = False,
         patch = None,
         span_u: int = 0,
         span_v: int = 0
     ):
-        """
-        Compute element stiffness Ke, mass Me, and load force vector fe.
-        """
+        """Compute element stiffness Ke, mass Me, and load force vector fe."""
         n_local = elem_coords.shape[0]
         n_dofs_local = 2 * n_local
         
@@ -37,9 +40,16 @@ class LinearElasticityFormulation(Formulation):
         if body_load is None:
             body_load = zeros(2)
 
+        if elem_basis is None and not is_nurbs:
+            from femx.basis.lagrange import LagrangeQuad
+            elem_basis = LagrangeQuad(p=1)
+
         for gp, w in zip(quadrature_pts, quadrature_wts):
-            from femx.basis.lagrange import compute_q1_mapping
-            N, dN_dphys, detJ = compute_q1_mapping(gp, elem_coords)
+            if is_nurbs and getattr(elem_basis, 'compute_mapping', None) is None:
+                from femx.basis.nurbs import compute_nurbs_mapping
+                N, dN_dphys, detJ = compute_nurbs_mapping(gp, patch, span_u, span_v)
+            else:
+                N, dN_dphys, detJ = elem_basis.compute_mapping(gp, elem_coords)
             
             dV = detJ * w
             
@@ -53,12 +63,9 @@ class LinearElasticityFormulation(Formulation):
                 B[2, 2 * i]     = dN_dy      # gamma_xy due to u_x
                 B[2, 2 * i + 1] = dN_dx      # gamma_xy due to u_y
                 
-            # Ke += (B^T D B) * dV
             Ke += (B.T @ D @ B) * dV
             
-            # Me += rho * N_i * N_j * dV (block diagonal)
             for i in range(n_local):
-                # Body load contribution
                 fe[2 * i]     += body_load[0] * N[i] * dV
                 fe[2 * i + 1] += body_load[1] * N[i] * dV
                 
@@ -70,17 +77,11 @@ class LinearElasticityFormulation(Formulation):
         return Ke, Me, fe
 
     def get_physical_tensors(self, geom, device: str = "cpu", dtype = None):
-        """
-        Return true 4th-order physical elasticity tensor for linear elasticity:
-        - C_4th: 4th-order elasticity tensor of shape (E, Q, dim, dim, dim, dim)
-        - M_0th: 0th-order density scalar of shape (E, Q)
-        - f_body: body force vector of shape (E, Q, dim)
-        """
         import torch
         if dtype is None:
             dtype = torch.float64
             
-        C4_np = self.material.get_elasticity_tensor_4th(mode=self.mode, dim=geom.dim) # (dim, dim, dim, dim)
+        C4_np = self.material.get_elasticity_tensor_4th(mode=self.mode, dim=geom.dim)
         C_4th = torch.tensor(C4_np, dtype=dtype, device=device).unsqueeze(0).unsqueeze(0).expand(
             geom.E, geom.Q, geom.dim, geom.dim, geom.dim, geom.dim
         )
@@ -90,3 +91,13 @@ class LinearElasticityFormulation(Formulation):
         f_body = None
         
         return C_4th, M_0th, f_body
+
+    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype=None):
+        import torch
+        C_4th, M_0th, f_body = tensors
+        k_dofs = geom.nen * geom.dim
+        # 4th-order physical tensor contraction (Vector Elasticity/Mechanics)
+        K_tensor = torch.einsum('q,eq,eqaj,eqijkl,eqbl->eaibk', geom.W_hat, geom.detJ, geom.G, C_4th, geom.G)
+        K_local = K_tensor.reshape(geom.E, k_dofs, k_dofs)
+        F_local = torch.zeros((geom.E, k_dofs), dtype=dtype, device=device)
+        return K_local, F_local
