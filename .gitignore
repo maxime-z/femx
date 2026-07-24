@@ -16,10 +16,12 @@ venv/
 ENV/
 
 # Output Plots & VTK Files
+examples/output/
 examples/*.png
 examples/*.vtu
 *.png
 *.vtu
+*.gif
 
 # OS & IDE Files
 .DS_Store

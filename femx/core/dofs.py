@@ -70,3 +70,12 @@ class DofMap:
         dof_arrays = [self.get_element_dofs(fn, entity_indices) for fn in field_names]
         return np.concatenate(dof_arrays)
 
+    def get_field_dofs(self, field_name: str) -> ndarray:
+        """Get all global DOF indices corresponding to a specific field."""
+        if field_name not in self.field_specs:
+            raise KeyError(f"Field {field_name} is not an unknown field in this DofMap")
+        spec = self.field_specs[field_name]
+        offset = self.field_offsets[field_name]
+        count = self.n_entities * spec.components
+        return np.arange(offset, offset + count, dtype=int)
+

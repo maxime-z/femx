@@ -147,13 +147,17 @@ def main():
     post_res = compute_element_stresses(mesh, u_dof_map, elastic_form, u_sol_only)
     sigma_vm_nodal = post_res.nodal_von_mises
 
+    import os
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
+
     # 1. Problem Setup & BCs Plot
     fig1, ax1 = plt.subplots(figsize=(8, 3.5))
     plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, ax=ax1)
     ax1.set_title("Problem Definition & Boundary Conditions Setup")
     fig1.tight_layout()
-    fig1.savefig("examples/thermoelastic_setup.png", dpi=200)
-    print("  Saved: examples/thermoelastic_setup.png")
+    fig1.savefig(os.path.join(output_dir, "thermoelastic_setup.png"), dpi=200)
+    print("  Saved: examples/output/thermoelastic_setup.png")
 
     # 2. All Field Solutions Grid Plot
     fig2, axes = plt.subplots(2, 2, figsize=(12, 6))
@@ -163,16 +167,16 @@ def main():
     plot_scalar_field_2d(mesh, sigma_vm_nodal / 1e6, title="von Mises Stress sigma_vm (MPa)", ax=axes[1, 1])
     fig2.suptitle("Coupled Thermoelastic Field Solutions (u, T, sigma)", fontsize=14, fontweight='bold')
     fig2.tight_layout()
-    fig2.savefig("examples/thermoelastic_fields.png", dpi=200)
-    print("  Saved: examples/thermoelastic_fields.png")
+    fig2.savefig(os.path.join(output_dir, "thermoelastic_fields.png"), dpi=200)
+    print("  Saved: examples/output/thermoelastic_fields.png")
 
     # 3. Initial Frame vs Deformed Frame Plots
     fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(10, 7))
     plot_deformed_mesh(mesh, U_sol, dof_map, scale=200.0, field_values=T_vals, field_title="Temperature T (°C)", ax=ax3a)
     plot_deformed_mesh(mesh, U_sol, dof_map, scale=200.0, field_values=sigma_vm_nodal / 1e6, field_title="von Mises Stress (MPa)", ax=ax3b)
     fig3.tight_layout()
-    fig3.savefig("examples/thermoelastic_deformed_frames.png", dpi=200)
-    print("  Saved: examples/thermoelastic_deformed_frames.png")
+    fig3.savefig(os.path.join(output_dir, "thermoelastic_deformed_frames.png"), dpi=200)
+    print("  Saved: examples/output/thermoelastic_deformed_frames.png")
 
     plt.close('all')
     print("\nPhase 3 coupled multi-field simulation and visualizations completed successfully!")

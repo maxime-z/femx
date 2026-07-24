@@ -131,11 +131,11 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         
         T0 = self.material.get_property("T0")
         
-        return C_4th, M_th, K_th, M_0th_u, T0
+        return C_4th, M_th, K_th, M_0th_u, M_0th_T, T0
 
     def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype=None):
         import torch
-        C_4th, M_th, K_th, M_0th, T0 = tensors
+        C_4th, M_th, K_th, M_0th_u, M_0th_T, T0 = tensors
         u_dofs = geom.nen * geom.dim
         T_dofs = geom.nen
         total_dofs = u_dofs + T_dofs
@@ -151,15 +151,26 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         # 3. K_TT (2nd-order thermal conductivity contraction)
         K_TT = torch.einsum('q,eq,eqai,eqij,eqbj->eab', geom.W_hat, geom.detJ, geom.G, K_th, geom.G)
 
+        # 4. M_uu and M_TT (Mass matrices)
+        M_uu_scalar = torch.einsum('q,eq,eq,qa,qb->eab', geom.W_hat, geom.detJ, M_0th_u, geom.B_hat, geom.B_hat)
+        M_TT = torch.einsum('q,eq,eq,qa,qb->eab', geom.W_hat, geom.detJ, M_0th_T, geom.B_hat, geom.B_hat)
+        
+        I_dim = torch.eye(geom.dim, dtype=dtype, device=device)
+        M_uu = torch.einsum('eab,ij->eaibj', M_uu_scalar, I_dim).reshape(geom.E, u_dofs, u_dofs)
+
         # Assemble block matrix
         K_local = torch.zeros((geom.E, total_dofs, total_dofs), dtype=dtype, device=device)
         K_local[:, 0:u_dofs, 0:u_dofs] = K_uu
         K_local[:, 0:u_dofs, u_dofs:total_dofs] = K_uT
         K_local[:, u_dofs:total_dofs, u_dofs:total_dofs] = K_TT
 
+        M_local = torch.zeros((geom.E, total_dofs, total_dofs), dtype=dtype, device=device)
+        M_local[:, 0:u_dofs, 0:u_dofs] = M_uu
+        M_local[:, u_dofs:total_dofs, u_dofs:total_dofs] = M_TT
+
         F_local = torch.zeros((geom.E, total_dofs), dtype=dtype, device=device)
         if abs(T0) > 1e-12:
             T0_vec = torch.full((geom.E, T_dofs), fill_value=T0, dtype=dtype, device=device)
             F_local[:, 0:u_dofs] -= torch.einsum('eij,ej->ei', K_uT, T0_vec)
             
-        return K_local, F_local
+        return K_local, M_local, F_local

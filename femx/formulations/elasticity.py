@@ -99,5 +99,11 @@ class LinearElasticityFormulation(Formulation[LinearElasticMaterial]):
         # 4th-order physical tensor contraction (Vector Elasticity/Mechanics)
         K_tensor = torch.einsum('q,eq,eqaj,eqijkl,eqbl->eaibk', geom.W_hat, geom.detJ, geom.G, C_4th, geom.G)
         K_local = K_tensor.reshape(geom.E, k_dofs, k_dofs)
+        
+        M_scalar = torch.einsum('q,eq,eq,qa,qb->eab', geom.W_hat, geom.detJ, M_0th, geom.B_hat, geom.B_hat)
+        I_dim = torch.eye(geom.dim, dtype=dtype, device=device)
+        M_tensor = torch.einsum('eab,ij->eaibj', M_scalar, I_dim)
+        M_local = M_tensor.reshape(geom.E, k_dofs, k_dofs)
+        
         F_local = torch.zeros((geom.E, k_dofs), dtype=dtype, device=device)
-        return K_local, F_local
+        return K_local, M_local, F_local

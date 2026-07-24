@@ -97,11 +97,15 @@ def main():
 
     u_sol = solve_system(K_tens, f_tens, dirichlet_bcs)
 
+    import os
     import matplotlib.pyplot as plt
     from femx.visualization.matplotlib_vis import (
         plot_boundary_conditions, plot_scalar_field_2d, plot_deformed_mesh
     )
     from femx.core.postprocessing import compute_element_stresses
+
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
 
     neumann_dict = {dof_map.get_dof("u", n, 1): F_y_node for n in mesh.boundaries["right"]}
 
@@ -110,8 +114,8 @@ def main():
     plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, neumann_forces=neumann_dict, ax=ax1)
     ax1.set_title("Benchmark 50x50 Mesh & Boundary Conditions")
     fig1.tight_layout()
-    fig1.savefig("examples/compare_engines_setup.png", dpi=200)
-    print("  Saved: examples/compare_engines_setup.png")
+    fig1.savefig(os.path.join(output_dir, "compare_engines_setup.png"), dpi=200)
+    print("  Saved: examples/output/compare_engines_setup.png")
 
     N = mesh.n_nodes
     ux_vals = np.array([u_sol[dof_map.get_dof("u", i, 0)] for i in range(N)])
@@ -127,16 +131,16 @@ def main():
     plot_scalar_field_2d(mesh, post_res.nodal_von_mises / 1e6, title="von Mises Stress sigma_vm (MPa)", ax=axes[1, 1])
     fig2.suptitle("Benchmark 50x50 Mesh Solution Fields", fontsize=14, fontweight='bold')
     fig2.tight_layout()
-    fig2.savefig("examples/compare_engines_fields.png", dpi=200)
-    print("  Saved: examples/compare_engines_fields.png")
+    fig2.savefig(os.path.join(output_dir, "compare_engines_fields.png"), dpi=200)
+    print("  Saved: examples/output/compare_engines_fields.png")
 
     # 3. Deformed Mesh Plot
     fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(8, 12))
     plot_deformed_mesh(mesh, u_sol, dof_map, scale=50.0, field_values=disp_norm, field_title="Displacement Magnitude ||u||", ax=ax3a)
     plot_deformed_mesh(mesh, u_sol, dof_map, scale=50.0, field_values=post_res.nodal_von_mises / 1e6, field_title="von Mises Stress (MPa)", ax=ax3b)
     fig3.tight_layout()
-    fig3.savefig("examples/compare_engines_deformed.png", dpi=200)
-    print("  Saved: examples/compare_engines_deformed.png")
+    fig3.savefig(os.path.join(output_dir, "compare_engines_deformed.png"), dpi=200)
+    print("  Saved: examples/output/compare_engines_deformed.png")
 
     plt.close('all')
 

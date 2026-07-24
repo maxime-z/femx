@@ -80,5 +80,6 @@ class HeatConductionFormulation(Formulation[LinearHeatMaterial]):
         K_2nd, M_0th, f_body = tensors
         # 2nd-order physical tensor contraction (Scalar Heat/Diffusion)
         K_local = torch.einsum('q,eq,eqai,eqij,eqbj->eab', geom.W_hat, geom.detJ, geom.G, K_2nd, geom.G)
+        M_local = torch.einsum('q,eq,eq,qa,qb->eab', geom.W_hat, geom.detJ, M_0th, geom.B_hat, geom.B_hat)
         F_local = torch.zeros((geom.E, geom.nen), dtype=dtype, device=device)
-        return K_local, F_local
+        return K_local, M_local, F_local

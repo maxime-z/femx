@@ -65,11 +65,15 @@ def main():
         ax=ax
     )
     
+    import os
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Save the plot
-    image_path = "examples/mesh_setup.png"
+    image_path = os.path.join(output_dir, "mesh_setup.png")
     plt.savefig(image_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"Mesh setup plot successfully saved to: {image_path}")
+    print(f"Mesh setup plot successfully saved to: examples/output/mesh_setup.png")
 
 if __name__ == "__main__":
     main()

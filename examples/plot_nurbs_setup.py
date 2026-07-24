@@ -50,11 +50,15 @@ def main():
     fig, ax = plt.subplots(figsize=(6, 6))
     plot_nurbs_geometry(patch, show_control_grid=True, ax=ax)
     
+    import os
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Save image
-    image_path = "examples/nurbs_setup.png"
+    image_path = os.path.join(output_dir, "nurbs_setup.png")
     plt.savefig(image_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"NURBS geometry setup plot successfully saved to: {image_path}")
+    print(f"NURBS geometry setup plot successfully saved to: examples/output/nurbs_setup.png")
 
 if __name__ == "__main__":
     main()

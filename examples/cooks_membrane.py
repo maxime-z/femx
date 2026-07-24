@@ -118,10 +118,14 @@ def main():
     max_vm = np.max(result.nodal_von_mises)
     print(f"Maximum von Mises stress: {max_vm:8.5f}")
     
+    import os
     # 9. Plot and export results
     from femx.visualization.matplotlib_vis import (
         plot_boundary_conditions, plot_scalar_field_2d, plot_deformed_mesh
     )
+
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
 
     # Neumann point force dictionary for visualization
     neumann_dict = {}
@@ -134,8 +138,8 @@ def main():
     plot_boundary_conditions(mesh, dof_map, dirichlet_bcs=dirichlet_bcs, neumann_forces=neumann_dict, ax=ax1)
     ax1.set_title("Cook's Membrane Setup & Boundary Conditions")
     fig1.tight_layout()
-    fig1.savefig("examples/cooks_membrane_setup.png", dpi=200)
-    print("Saved: examples/cooks_membrane_setup.png")
+    fig1.savefig(os.path.join(output_dir, "cooks_membrane_setup.png"), dpi=200)
+    print("Saved: examples/output/cooks_membrane_setup.png")
 
     N = mesh.n_nodes
     ux_vals = np.array([U[dof_map.get_dof("u", i, 0)] for i in range(N)])
@@ -150,23 +154,23 @@ def main():
     plot_scalar_field_2d(mesh, result.nodal_von_mises, title="von Mises Stress sigma_vm", ax=axes[1, 1])
     fig2.suptitle("Cook's Membrane Field Solutions (u, sigma)", fontsize=14, fontweight='bold')
     fig2.tight_layout()
-    fig2.savefig("examples/cooks_membrane_fields.png", dpi=200)
-    print("Saved: examples/cooks_membrane_fields.png")
+    fig2.savefig(os.path.join(output_dir, "cooks_membrane_fields.png"), dpi=200)
+    print("Saved: examples/output/cooks_membrane_fields.png")
 
     # 3. Initial Frame vs Deformed Frame Plots
     fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(8, 12))
     plot_deformed_mesh(mesh, U, dof_map, scale=0.5, field_values=disp_norm, field_title="Displacement Magnitude ||u||", ax=ax3a)
     plot_deformed_mesh(mesh, U, dof_map, scale=0.5, field_values=result.nodal_von_mises, field_title="von Mises Stress", ax=ax3b)
     fig3.tight_layout()
-    fig3.savefig("examples/cooks_membrane_deformed.png", dpi=200)
-    print("Saved: examples/cooks_membrane_deformed.png")
+    fig3.savefig(os.path.join(output_dir, "cooks_membrane_deformed.png"), dpi=200)
+    print("Saved: examples/output/cooks_membrane_deformed.png")
 
     plt.close('all')
 
     u_vector = U.reshape((-1, 2))
     try:
-        export_to_vtk(mesh, "examples/cooks_membrane_solution.vtu", u_vector, "Displacement")
-        print("Exported VTK file to examples/cooks_membrane_solution.vtu")
+        export_to_vtk(mesh, os.path.join(output_dir, "cooks_membrane_solution.vtu"), u_vector, "Displacement")
+        print("Exported VTK file to examples/output/cooks_membrane_solution.vtu")
     except Exception as e:
         print(f"Skipping VTK export: {e}")
 
