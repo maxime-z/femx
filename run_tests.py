@@ -23,6 +23,10 @@ from tests.test_thermoelasticity import (
     test_constrained_thermal_expansion,
     test_unconstrained_thermal_expansion
 )
+from tests.test_hyperelasticity import (
+    test_neohookean_constitutive,
+    test_single_element_hyperelastic_newton
+)
 
 def run_test(name, func):
     print(f"Running {name:50s}...", end="")
@@ -50,8 +54,11 @@ def main():
         "test_tensor_vs_traditional_elasticity": test_tensor_vs_traditional_elasticity,
         "test_thermoelastic_block_matrices": test_thermoelastic_block_matrices,
         "test_constrained_thermal_expansion": test_constrained_thermal_expansion,
-        "test_unconstrained_thermal_expansion": test_unconstrained_thermal_expansion
+        "test_unconstrained_thermal_expansion": test_unconstrained_thermal_expansion,
+        "test_neohookean_constitutive": test_neohookean_constitutive,
+        "test_single_element_hyperelastic_newton": test_single_element_hyperelastic_newton,
     }
+
     
     success = True
     for name, func in tests.items():

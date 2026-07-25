@@ -109,3 +109,54 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str =
     M_global = sp.coo_matrix((mass_data, (mass_rows, mass_cols)), shape=(n_dofs, n_dofs)).tocsr()
     
     return K_global, M_global, f_global
+
+
+def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, body_load=None):
+    """
+    Assemble the global tangent stiffness matrix K and global residual vector R for a given state.
+    
+    Args:
+        dof_map: DofMap mapping degrees of freedom to equations
+        formulation: Physical formulation with compute_element_residual_and_tangent method
+        state: State object containing current field values
+        body_load: Body load/forcing term
+        
+    Returns:
+        K_global: csr_matrix of shape (n_dofs, n_dofs)
+        R_global: ndarray of shape (n_dofs,)
+    """
+    n_dofs = dof_map.n_dofs
+    geometry = dof_map.geometry
+    field_names = list(formulation.field_names)
+    
+    rows = []
+    cols = []
+    data = []
+    R_global = np.zeros(n_dofs)
+    
+    if isinstance(geometry, Mesh):
+        cells = geometry.cells
+        coords = geometry.coords
+        quad_pts, quad_wts = get_quadrature_2d(2, 2)
+        
+        for elem_idx, cell in enumerate(cells):
+            elem_coords = coords[cell]
+            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
+            elem_u = state.values["u"][cell]
+            
+            Re, Ke = formulation.compute_element_residual_and_tangent(
+                elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load
+            )
+            
+            r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+            rows.extend(r.ravel())
+            cols.extend(c.ravel())
+            data.extend(Ke.ravel())
+            
+            np.add.at(R_global, elem_dofs, Re)
+    else:
+        raise NotImplementedError("Nonlinear assembly currently implemented for Mesh.")
+        
+    K_global = sp.coo_matrix((data, (rows, cols)), shape=(n_dofs, n_dofs)).tocsr()
+    return K_global, R_global
+

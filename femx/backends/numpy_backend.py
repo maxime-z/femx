@@ -10,6 +10,8 @@ from numpy import (
     ones_like, block, concatenate, stack
 )
 
+from numpy.linalg import det, inv
+
 def invert_matrix(m):
     """Compute the inverse of a square matrix."""
     return np.linalg.inv(m)
