@@ -1,8 +1,8 @@
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List
 from femx.backends.numpy_backend import ndarray, array, invert_matrix, determinant
 from femx.basis.element import ElementBasis
-from femx.core.mesh import NurbsPatch
+from femx.geometry.nurbs import NurbsPatch
 from femx.core.quadrature import get_quadrature_2d
 
 def find_span(n: int, p: int, u: float, knots: ndarray) -> int:
@@ -87,14 +87,17 @@ class NurbsBasis(ElementBasis):
         self.patch = patch
         self.span_u = span_u
         self.span_v = span_v
+        
+        self.p_u = patch.degrees[0]
+        self.p_v = patch.degrees[1]
 
     @property
     def n_dofs_per_element(self) -> int:
-        return (self.patch.p_u + 1) * (self.patch.p_v + 1)
+        return (self.p_u + 1) * (self.p_v + 1)
 
     @property
     def dim(self) -> int:
-        return 2
+        return self.patch.parametric_dim
 
     def evaluate_shape_functions(self, ref_coords: ndarray) -> ndarray:
         R, _, _ = compute_nurbs_mapping(ref_coords, self.patch, self.span_u, self.span_v)
@@ -108,14 +111,19 @@ class NurbsBasis(ElementBasis):
         return compute_nurbs_mapping(ref_coords, self.patch, self.span_u, self.span_v)
 
     def get_default_quadrature(self) -> Tuple[ndarray, ndarray]:
-        nu = self.patch.p_u + 1
-        nv = self.patch.p_v + 1
+        nu = self.p_u + 1
+        nv = self.p_v + 1
         return get_quadrature_2d(nu, nv)
 
 def compute_nurbs_mapping(gp_ref: ndarray, patch: NurbsPatch, span_u: int, span_v: int) -> Tuple[ndarray, ndarray, float]:
     """Compute reference-to-physical mapping for a NURBS element span."""
-    u1, u2 = patch.knots_u[span_u], patch.knots_u[span_u + 1]
-    v1, v2 = patch.knots_v[span_v], patch.knots_v[span_v + 1]
+    p_u = patch.degrees[0]
+    p_v = patch.degrees[1]
+    knots_u = patch.knot_vectors[0].knots
+    knots_v = patch.knot_vectors[1].knots
+    
+    u1, u2 = knots_u[span_u], knots_u[span_u + 1]
+    v1, v2 = knots_v[span_v], knots_v[span_v + 1]
     
     hu = 0.5 * (u2 - u1)
     hv = 0.5 * (v2 - v1)
@@ -125,22 +133,22 @@ def compute_nurbs_mapping(gp_ref: ndarray, patch: NurbsPatch, span_u: int, span_
     
     detJ_PR = hu * hv
     
-    ders_u = ders_basis_functions(span_u, u, patch.p_u, 1, patch.knots_u)
-    ders_v = ders_basis_functions(span_v, v, patch.p_v, 1, patch.knots_v)
+    ders_u = ders_basis_functions(span_u, u, p_u, 1, knots_u)
+    ders_v = ders_basis_functions(span_v, v, p_v, 1, knots_v)
     
-    n_local = (patch.p_u + 1) * (patch.p_v + 1)
+    n_local = (p_u + 1) * (p_v + 1)
     B = np.zeros(n_local)
     dB_du = np.zeros(n_local)
     dB_dv = np.zeros(n_local)
     
     w_local = np.zeros(n_local)
-    elem_coords = np.zeros((n_local, 2))
+    elem_coords = np.zeros((n_local, patch.physical_dim))
     
-    for j in range(patch.p_v + 1):
-        idx_v = span_v - patch.p_v + j
-        for i in range(patch.p_u + 1):
-            idx_u = span_u - patch.p_u + i
-            local_idx = j * (patch.p_u + 1) + i
+    for j in range(p_v + 1):
+        idx_v = span_v - p_v + j
+        for i in range(p_u + 1):
+            idx_u = span_u - p_u + i
+            local_idx = j * (p_u + 1) + i
             
             N_u = ders_u[0, i]
             dN_du = ders_u[1, i]
@@ -176,3 +184,43 @@ def compute_nurbs_mapping(gp_ref: ndarray, patch: NurbsPatch, span_u: int, span_
     dR_dphys = invJ_PP @ dR_dparam
     
     return R, dR_dphys, detJ
+
+def get_quadrature_spans(patch: NurbsPatch) -> List[Tuple[Tuple[int, ...], Tuple[Tuple[float, float], ...]]]:
+    """
+    Returns the valid non-zero knot spans for quadrature integration.
+    For a 2D patch, returns a list of elements, where each element has:
+    - spans: tuple of span indices (span_u, span_v)
+    - domain: tuple of integration domains ((u_min, u_max), (v_min, v_max))
+    """
+    dim = patch.parametric_dim
+    unique_knots = []
+    for d in range(dim):
+        uk, _ = patch.knot_vectors[d].unique_knots()
+        unique_knots.append(uk)
+        
+    elements = []
+    if dim == 1:
+        uk = unique_knots[0]
+        for i in range(len(uk) - 1):
+            span_idx = patch.knot_vectors[0].find_span(patch.degrees[0], uk[i])
+            elements.append(((span_idx,), ((uk[i], uk[i+1]),)))
+    elif dim == 2:
+        uk0 = unique_knots[0]
+        uk1 = unique_knots[1]
+        for i in range(len(uk0) - 1):
+            for j in range(len(uk1) - 1):
+                span0 = patch.knot_vectors[0].find_span(patch.degrees[0], uk0[i])
+                span1 = patch.knot_vectors[1].find_span(patch.degrees[1], uk1[j])
+                elements.append( ((span0, span1), ((uk0[i], uk0[i+1]), (uk1[j], uk1[j+1]))) )
+    elif dim == 3:
+        uk0 = unique_knots[0]
+        uk1 = unique_knots[1]
+        uk2 = unique_knots[2]
+        for i in range(len(uk0) - 1):
+            for j in range(len(uk1) - 1):
+                for k in range(len(uk2) - 1):
+                    span0 = patch.knot_vectors[0].find_span(patch.degrees[0], uk0[i])
+                    span1 = patch.knot_vectors[1].find_span(patch.degrees[1], uk1[j])
+                    span2 = patch.knot_vectors[2].find_span(patch.degrees[2], uk2[k])
+                    elements.append( ((span0, span1, span2), ((uk0[i], uk0[i+1]), (uk1[j], uk1[j+1]), (uk2[k], uk2[k+1]))) )
+    return elements

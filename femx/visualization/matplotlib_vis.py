@@ -72,7 +72,8 @@ def plot_boundary_conditions(
         for dof, val in dirichlet_bcs.items():
             for name, offset in dof_map.field_offsets.items():
                 spec = dof_map.field_specs[name]
-                length = dof_map.n_entities * spec.components
+                n_ent = dof_map.field_entities[name]
+                length = n_ent * spec.components
                 if offset <= dof < offset + length:
                     rel_dof = dof - offset
                     node = rel_dof // spec.components
@@ -94,7 +95,8 @@ def plot_boundary_conditions(
                 continue
             for name, offset in dof_map.field_offsets.items():
                 spec = dof_map.field_specs[name]
-                length = dof_map.n_entities * spec.components
+                n_ent = dof_map.field_entities[name]
+                length = n_ent * spec.components
                 if offset <= dof < offset + length:
                     rel_dof = dof - offset
                     node = rel_dof // spec.components

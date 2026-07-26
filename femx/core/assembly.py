@@ -114,6 +114,7 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str =
 def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, body_load=None):
     """
     Assemble the global tangent stiffness matrix K and global residual vector R for a given state.
+    Supports single-field and multi-field (u, p) formulations on Mesh and NurbsPatch.
     
     Args:
         dof_map: DofMap mapping degrees of freedom to equations
@@ -144,8 +145,12 @@ def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, 
             elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
             elem_u = state.values["u"][cell]
             
+            kwargs = {}
+            if "p" in field_names and "p" in state.values:
+                kwargs["elem_p"] = state.values["p"][cell]
+            
             Re, Ke = formulation.compute_element_residual_and_tangent(
-                elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load
+                elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
             )
             
             r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
@@ -154,9 +159,62 @@ def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, 
             data.extend(Ke.ravel())
             
             np.add.at(R_global, elem_dofs, Re)
+            
+    elif isinstance(geometry, NurbsPatch):
+        from femx.basis.nurbs import NurbsBasis
+        # IGA NURBS Patch assembly for nonlinear system
+        quad_pts, quad_wts = get_quadrature_2d(geometry.p_u + 1, geometry.p_v + 1)
+        spans = geometry.get_element_spans()
+        flat_cp_coords = geometry.control_points.transpose(1, 0, 2).reshape((-1, 2))
+        
+        for span_u, span_v in spans:
+            cell_u = geometry.get_element_control_points(span_u, span_v)
+            elem_coords = flat_cp_coords[cell_u]
+            
+            # Check if pressure geometry is a separate patch or same
+            p_geom = dof_map.geometries.get("p", geometry)
+            if p_geom is geometry:
+                cell_p = cell_u
+                span_u_p, span_v_p = span_u, span_v
+            else:
+                flat_cp_coords_p = p_geom.control_points.transpose(1, 0, 2).reshape((-1, 2))
+                # Map geometric element using center parametric coordinate
+                u_c = 0.5 * (geometry.knot_vectors[0].knots[span_u] + geometry.knot_vectors[0].knots[span_u+1])
+                v_c = 0.5 * (geometry.knot_vectors[1].knots[span_v] + geometry.knot_vectors[1].knots[span_v+1])
+                span_u_p = p_geom.knot_vectors[0].find_span(p_geom.degrees[0], u_c)
+                span_v_p = p_geom.knot_vectors[1].find_span(p_geom.degrees[1], v_c)
+                cell_p = p_geom.get_element_control_points(span_u_p, span_v_p)
+
+            cell_dict = {"u": cell_u, "p": cell_p} if "p" in field_names else cell_u
+            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell_dict)
+            
+            elem_u = state.values["u"][cell_u]
+            kwargs = {}
+            if "p" in field_names and "p" in state.values:
+                kwargs["elem_p"] = state.values["p"][cell_p]
+            
+            kwargs["elem_basis_u"] = NurbsBasis(geometry, span_u, span_v)
+            if "p" in field_names:
+                kwargs["elem_basis_p"] = NurbsBasis(p_geom, span_u_p, span_v_p)
+            else:
+                kwargs["elem_basis"] = NurbsBasis(geometry, span_u, span_v)
+            
+            # Evaluate using NurbBasis / patch
+            Re, Ke = formulation.compute_element_residual_and_tangent(
+                elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
+            )
+            
+            r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+            rows.extend(r.ravel())
+            cols.extend(c.ravel())
+            data.extend(Ke.ravel())
+            
+            np.add.at(R_global, elem_dofs, Re)
+            
     else:
-        raise NotImplementedError("Nonlinear assembly currently implemented for Mesh.")
+        raise TypeError("Geometry must be Mesh or NurbsPatch")
         
     K_global = sp.coo_matrix((data, (rows, cols)), shape=(n_dofs, n_dofs)).tocsr()
     return K_global, R_global
+
 

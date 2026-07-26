@@ -23,26 +23,14 @@ class NewtonSolver:
         formulation: Formulation,
         state: State,
         dirichlet_bcs: Dict[int, float],
-        body_load: Optional[ndarray] = None
+        body_load: Optional[ndarray] = None,
+        neumann_load: Optional[ndarray] = None
     ) -> Tuple[State, List[float]]:
         """
         Perform Newton-Raphson iteration until convergence.
-        
-        Args:
-            dof_map: DofMap for global system
-            formulation: Formulation with compute_element_residual_and_tangent
-            state: Initial guess State
-            dirichlet_bcs: Map of global DOF index -> prescribed value
-            body_load: Body force array
-            
-        Returns:
-            state: Converged state
-            residual_history: List of free residual norms per iteration
         """
-        # Pack current state into vector U
         U = state.pack_vector(dof_map)
         
-        # Apply initial Dirichlet boundary conditions to U
         for dof, val in dirichlet_bcs.items():
             U[dof] = val
         state.unpack_vector(U, dof_map)
@@ -55,35 +43,44 @@ class NewtonSolver:
         r0_norm = None
         
         for k in range(self.max_iter):
-            # Assemble tangent matrix K and residual vector R
             K, R = assemble_nonlinear_system(dof_map, formulation, state, body_load=body_load)
+            if neumann_load is not None:
+                R -= neumann_load
             
-            # Compute residual norm on free DOFs
             R_free = R[free_dofs]
             r_norm = float(np.linalg.norm(R_free))
             residual_history.append(r_norm)
             
             if k == 0:
-                r0_norm = r_norm
+                r0_norm = r_norm if r_norm > 0 else 1.0
                 
-            # Convergence check
             target_tol = self.rtol * r0_norm + self.atol
             if r_norm <= target_tol or r_norm <= self.atol:
                 return state, residual_history
                 
-            # Set up increment solve K * dU = -R
-            # For Dirichlet DOFs, we want dU = 0, so RHS for dU is 0.0
             delta_bcs = {dof: 0.0 for dof in constrained_dofs}
-            
-            # Apply zero-increment BCs to linear system (K, -R)
             K_eff, neg_R_eff = apply_dirichlet_bcs(K, -R, delta_bcs, preserve_symmetry=False)
             
-            # Solve for displacement increment dU
             dU = solve_linear(K_eff, neg_R_eff)
             
-            # Update solution U and state
-            U += dU
-            state.unpack_vector(U, dof_map)
+            # Simple line search to prevent element inversion in large strain
+            step_length = 1.0
+            for _ in range(5):
+                U_trial = U + step_length * dU
+                state.unpack_vector(U_trial, dof_map)
+                try:
+                    K_test, R_test = assemble_nonlinear_system(dof_map, formulation, state, body_load=body_load)
+                    if neumann_load is not None:
+                        R_test -= neumann_load
+                    r_test_norm = float(np.linalg.norm(R_test[free_dofs]))
+                    if r_test_norm < r_norm or step_length <= 0.125:
+                        U = U_trial
+                        break
+                except ValueError:
+                    step_length *= 0.5
+            else:
+                U += step_length * dU
+                state.unpack_vector(U, dof_map)
             
         raise RuntimeError(
             f"Newton-Raphson failed to converge after {self.max_iter} iterations. "
@@ -106,35 +103,23 @@ class LoadStepper:
         formulation: Formulation,
         initial_state: State,
         full_dirichlet_bcs: Dict[int, float],
-        full_body_load: Optional[ndarray] = None
+        full_body_load: Optional[ndarray] = None,
+        full_neumann_load: Optional[ndarray] = None
     ) -> Tuple[State, List[State]]:
-        """
-        Step through pseudo-time steps from lambda = 1/n_steps to 1.0.
-        
-        Args:
-            dof_map: DofMap for global system
-            formulation: Hyperelastic formulation
-            initial_state: Starting State
-            full_dirichlet_bcs: Full magnitude Dirichlet BCs at lambda=1.0
-            full_body_load: Full magnitude body force at lambda=1.0
-            
-        Returns:
-            final_state: Converged state at lambda=1.0
-            state_history: List of converged states at each step
-        """
         state = initial_state
         state_history = [state]
         
         for step in range(1, self.n_steps + 1):
             lam = step / float(self.n_steps)
             
-            # Scale boundary conditions and body loads by pseudo-time factor lambda
             step_bcs = {dof: val * lam for dof, val in full_dirichlet_bcs.items()}
-            step_load = full_body_load * lam if full_body_load is not None else None
+            step_body = full_body_load * lam if full_body_load is not None else None
+            step_neumann = full_neumann_load * lam if full_neumann_load is not None else None
             
             state, _ = self.newton_solver.solve(
-                dof_map, formulation, state, step_bcs, body_load=step_load
+                dof_map, formulation, state, step_bcs, body_load=step_body, neumann_load=step_neumann
             )
             state_history.append(state)
             
         return state, state_history
+

@@ -20,19 +20,21 @@ class State:
         u_vec = zeros(dof_map.n_dofs)
         for field_name, offset in dof_map.field_offsets.items():
             spec = dof_map.field_specs[field_name]
+            n_ent = dof_map.field_entities[field_name]
             if field_name in self.values:
                 val = self.values[field_name]  # shape (n_entities, n_components)
-                # Flatten the field values to match dof numbering: offset + entity * components + comp
-                u_vec[offset : offset + dof_map.n_entities * spec.components] = val.ravel()
+                u_vec[offset : offset + n_ent * spec.components] = val.ravel()
         return u_vec
 
     def unpack_vector(self, u_vec: ndarray, dof_map: DofMap):
         """Unpack a flat equation vector into the values dictionary."""
         for field_name, offset in dof_map.field_offsets.items():
             spec = dof_map.field_specs[field_name]
-            length = dof_map.n_entities * spec.components
+            n_ent = dof_map.field_entities[field_name]
+            length = n_ent * spec.components
             flat_val = u_vec[offset : offset + length]
-            self.values[field_name] = flat_val.reshape(dof_map.n_entities, spec.components)
+            self.values[field_name] = flat_val.reshape(n_ent, spec.components)
+
             
     def initialize_field(self, field_name: str, n_entities: int, components: int):
         """Initialize a field value dictionary to zero."""
