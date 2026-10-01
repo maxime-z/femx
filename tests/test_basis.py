@@ -105,3 +105,28 @@ def test_nurbs_2d_mapping():
             # determinant of physical mapping Jacobian from parametric to physical should be 1.0.
             # Reference to parametric scales u by 0.5, v by 0.5, so total detJ = 0.25
             assert np.isclose(detJ, 0.25)
+
+
+def test_nurbs_hand_known_quadratic_basis():
+    """
+    Compare Cox-de Boor values at one interior point against an independent
+    hand expansion for an open quadratic Bezier knot vector with unit weights.
+    Knots: [0,0,0,1,1,1], p=2, u=0.5.
+    On this knot vector the B-splines are the Bernstein polynomials:
+      N0=(1-u)^2, N1=2u(1-u), N2=u^2
+    """
+    knots = array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+    p = 2
+    u = 0.5
+    n = 2  # 3 control points
+    span = find_span(n, p, u, knots)
+    assert span == 2
+
+    N_hand = array([(1.0 - u) ** 2, 2.0 * u * (1.0 - u), u ** 2])
+    dN_hand = array([-2.0 * (1.0 - u), 2.0 * (1.0 - u) - 2.0 * u, 2.0 * u])
+
+    ders = ders_basis_functions(span, u, p, 1, knots)
+    assert np.allclose(ders[0], N_hand, atol=1e-14)
+    assert np.allclose(ders[1], dN_hand, atol=1e-14)
+    assert np.isclose(np.sum(ders[0]), 1.0)
+    assert np.isclose(np.sum(ders[1]), 0.0, atol=1e-14)

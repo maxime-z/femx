@@ -5,9 +5,9 @@ from femx.backends.numpy_backend import ndarray, array
 @dataclass
 class Mesh:
     """Standard FEM Mesh representation."""
-    # Coordinates of nodes: array of shape (n_nodes, 2)
+    # Coordinates of nodes: array of shape (n_nodes, dim) with dim in {2, 3}
     coords: ndarray
-    # Cell connectivity: array of shape (n_elements, 4) for Q1 elements
+    # Cell connectivity: (n_elements, 4) for Q1 quads or (n_elements, 8) for hexes
     cells: ndarray
     # Boundary definitions: dict mapping name to array of node indices
     boundaries: Dict[str, ndarray] = field(default_factory=dict)
@@ -19,6 +19,10 @@ class Mesh:
     @property
     def n_elements(self) -> int:
         return self.cells.shape[0]
+
+    @property
+    def dim(self) -> int:
+        return self.coords.shape[1]
 
     def plot(self, values: ndarray = None, show_nodes: bool = True, boundary_colors: Dict[str, str] = None, title: str = "Mesh Plot", ax = None):
         """Plot the mesh layout or a scalar field defined on it."""

@@ -4,6 +4,7 @@ from femx.formulations.base import Formulation
 from femx.backends.numpy_backend import ndarray, zeros, eye, det, inv
 from femx.materials.hyperelastic import NeoHookeanMaterial
 from femx.basis.element import ElementBasis
+from femx.core.loads import sample_body_load
 
 class HyperelasticFormulation(Formulation[NeoHookeanMaterial]):
     """
@@ -22,7 +23,8 @@ class HyperelasticFormulation(Formulation[NeoHookeanMaterial]):
         quadrature_pts: ndarray,
         quadrature_wts: ndarray,
         body_load: Optional[ndarray] = None,
-        elem_basis: Optional[ElementBasis] = None
+        elem_basis: Optional[ElementBasis] = None,
+        **kwargs
     ) -> Tuple[ndarray, ndarray]:
         """
         Compute element internal force (residual) Re and tangent stiffness Ke.
@@ -45,16 +47,15 @@ class HyperelasticFormulation(Formulation[NeoHookeanMaterial]):
         Re = zeros(n_dofs_local)
         Ke = zeros((n_dofs_local, n_dofs_local))
         
-        if body_load is None:
-            body_load = zeros(dim)
-            
         if elem_basis is None:
-            from femx.basis.lagrange import LagrangeQuad
-            elem_basis = LagrangeQuad(p=1)
-            
-        for gp, w in zip(quadrature_pts, quadrature_wts):
+            raise ValueError("elem_basis is required; the assembler must provide LagrangeQuad/Hex or NurbsBasis")
+
+        elem_idx = int(kwargs.get("elem_idx", 0))
+        for q, (gp, w) in enumerate(zip(quadrature_pts, quadrature_wts)):
             N, dN_dX, detJ = elem_basis.compute_mapping(gp, elem_coords)
             dV = detJ * w
+            xyz = N @ elem_coords
+            f_gp = sample_body_load(body_load, xyz, elem_idx=elem_idx, q_idx=q, n_comp=dim)
             
             # Displacement gradient H_ij = d(u_i)/d(X_j) = sum_a u_{a, i} * dN_a/dX_j
             # elem_u is shape (n_local, dim), dN_dX is shape (dim, n_local)
@@ -74,7 +75,7 @@ class HyperelasticFormulation(Formulation[NeoHookeanMaterial]):
                     # Internal force contribution
                     f_int_ai = np.sum(P[i, :] * dN_dX[:, a]) * dV
                     # External force contribution
-                    f_ext_ai = body_load[i] * N[a] * dV
+                    f_ext_ai = f_gp[i] * N[a] * dV
                     
                     Re[dof_ai] += f_int_ai - f_ext_ai
                     
@@ -110,7 +111,7 @@ class HyperelasticFormulation(Formulation[NeoHookeanMaterial]):
     def get_physical_tensors(self, geom, device: str = "cpu", dtype = None):
         raise NotImplementedError("Hyperelasticity relies on state-dependent nonlinear assembly.")
 
-    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None):
+    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None, body_load=None):
         raise NotImplementedError("Hyperelasticity relies on state-dependent nonlinear assembly.")
 
 
@@ -133,7 +134,8 @@ class MixedHyperelasticFormulation(Formulation):
         body_load: Optional[ndarray] = None,
         elem_p: Optional[ndarray] = None,
         elem_basis_u: Optional[ElementBasis] = None,
-        elem_basis_p: Optional[ElementBasis] = None
+        elem_basis_p: Optional[ElementBasis] = None,
+        **kwargs
     ) -> Tuple[ndarray, ndarray]:
         """
         Compute element residual vector Re = [Re_u, Re_p]^T and coupled tangent Ke.
@@ -156,19 +158,19 @@ class MixedHyperelasticFormulation(Formulation):
         Re = zeros(n_dofs_total)
         Ke = zeros((n_dofs_total, n_dofs_total))
 
-        if body_load is None:
-            body_load = zeros(dim)
-
         if elem_basis_u is None:
             from femx.basis.lagrange import LagrangeQuad
             elem_basis_u = LagrangeQuad(p=1)
         if elem_basis_p is None:
             elem_basis_p = elem_basis_u
 
-        for gp, w in zip(quadrature_pts, quadrature_wts):
+        elem_idx = int(kwargs.get("elem_idx", 0))
+        for q, (gp, w) in enumerate(zip(quadrature_pts, quadrature_wts)):
             N_u, dN_u_dX, detJ = elem_basis_u.compute_mapping(gp, elem_coords)
             N_p = elem_basis_p.evaluate_shape_functions(gp)
             dV = detJ * w
+            xyz = N_u @ elem_coords
+            f_gp = sample_body_load(body_load, xyz, elem_idx=elem_idx, q_idx=q, n_comp=dim)
 
             # Displacement gradient H = u_e^T @ dN_u_dX^T
             H = elem_u.T @ dN_u_dX.T
@@ -185,7 +187,7 @@ class MixedHyperelasticFormulation(Formulation):
                 for i in range(dim):
                     dof_ai = a * dim + i
                     f_int = np.sum(P[i, :] * dN_u_dX[:, a]) * dV
-                    f_ext = body_load[i] * N_u[a] * dV
+                    f_ext = f_gp[i] * N_u[a] * dV
                     Re[dof_ai] += f_int - f_ext
 
             for a in range(n_p):
@@ -256,7 +258,7 @@ class MixedHyperelasticFormulation(Formulation):
     def get_physical_tensors(self, geom, device: str = "cpu", dtype = None):
         raise NotImplementedError("MixedHyperelasticFormulation relies on state-dependent nonlinear assembly.")
 
-    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None):
+    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None, body_load=None):
         raise NotImplementedError("MixedHyperelasticFormulation relies on state-dependent nonlinear assembly.")
 
 
@@ -273,14 +275,14 @@ class FBarHyperelasticFormulation(HyperelasticFormulation):
         quadrature_pts: ndarray,
         quadrature_wts: ndarray,
         body_load: Optional[ndarray] = None,
-        elem_basis: Optional[ElementBasis] = None
+        elem_basis: Optional[ElementBasis] = None,
+        **kwargs
     ) -> Tuple[ndarray, ndarray]:
         n_local, dim = elem_coords.shape
         n_dofs_local = dim * n_local
 
         if elem_basis is None:
-            from femx.basis.lagrange import LagrangeQuad
-            elem_basis = LagrangeQuad(p=1)
+            raise ValueError("elem_basis is required; the assembler must provide LagrangeQuad/Hex or NurbsBasis")
 
         def compute_residual(u_mat):
             # Centroidal / Mean deformation gradient F_tilde
@@ -294,14 +296,13 @@ class FBarHyperelasticFormulation(HyperelasticFormulation):
             F_c_inv_T = inv(F_c).T
 
             Re = zeros(n_dofs_local)
-            if body_load is None:
-                b_load = zeros(dim)
-            else:
-                b_load = body_load
+            elem_idx = int(kwargs.get("elem_idx", 0))
 
-            for gp, w in zip(quadrature_pts, quadrature_wts):
+            for q, (gp, w) in enumerate(zip(quadrature_pts, quadrature_wts)):
                 N, dN_dX, detJ = elem_basis.compute_mapping(gp, elem_coords)
                 dV = detJ * w
+                xyz = N @ elem_coords
+                f_gp = sample_body_load(body_load, xyz, elem_idx=elem_idx, q_idx=q, n_comp=dim)
 
                 H = u_mat.T @ dN_dX.T
                 F = eye(dim) + H
@@ -322,7 +323,7 @@ class FBarHyperelasticFormulation(HyperelasticFormulation):
                         dof_ai = a * dim + i
                         f_int_ai = (np.sum((alpha * P[i, :] - beta * F_inv_T[i, :]) * dN_dX[:, a]) +
                                     np.sum(beta * F_c_inv_T[i, :] * dN_dX_c[:, a])) * dV
-                        f_ext_ai = b_load[i] * N[a] * dV
+                        f_ext_ai = f_gp[i] * N[a] * dV
                         Re[dof_ai] += f_int_ai - f_ext_ai
             return Re
 
@@ -339,3 +340,71 @@ class FBarHyperelasticFormulation(HyperelasticFormulation):
             Ke[:, j] = (Re_pert - Re_base) / eps
 
         return Re_base, Ke
+
+
+class StatefulHyperelasticFormulation(HyperelasticFormulation):
+    """
+    Hyperelasticity with a scalar Gauss history alpha.
+    Reads committed alpha from state.gauss_variables['alpha'] and writes
+    alpha_trial only into state.trial_gauss_variables['alpha'].
+    Requires kwargs ``state`` and ``elem_idx`` from the assembler.
+    """
+    def __init__(self, material):
+        # material must implement update(F, alpha_n) -> (P, C4, alpha_trial)
+        Formulation.__init__(self, material)
+
+    def compute_element_residual_and_tangent(
+        self,
+        elem_coords: ndarray,
+        elem_u: ndarray,
+        quadrature_pts: ndarray,
+        quadrature_wts: ndarray,
+        body_load: Optional[ndarray] = None,
+        elem_basis: Optional[ElementBasis] = None,
+        state=None,
+        elem_idx: int = 0,
+    ) -> Tuple[ndarray, ndarray]:
+        n_local, dim = elem_coords.shape
+        n_dofs_local = dim * n_local
+
+        Re = zeros(n_dofs_local)
+        Ke = zeros((n_dofs_local, n_dofs_local))
+
+        if elem_basis is None:
+            raise ValueError("elem_basis is required; the assembler must provide LagrangeQuad/Hex or NurbsBasis")
+        if state is None:
+            raise ValueError("StatefulHyperelasticFormulation requires state=...")
+
+        for q, (gp, w) in enumerate(zip(quadrature_pts, quadrature_wts)):
+            N, dN_dX, detJ = elem_basis.compute_mapping(gp, elem_coords)
+            dV = detJ * w
+            xyz = N @ elem_coords
+            f_gp = sample_body_load(body_load, xyz, elem_idx=elem_idx, q_idx=q, n_comp=dim)
+
+            H = elem_u.T @ dN_dX.T
+            F = eye(dim) + H
+
+            alpha_n = float(state.gauss_variables["alpha"][elem_idx, q, 0])
+            P, C4, alpha_trial = self.material.update(F, alpha_n)
+            state.trial_gauss_variables["alpha"][elem_idx, q, 0] = alpha_trial
+
+            for a in range(n_local):
+                for i in range(dim):
+                    dof_ai = a * dim + i
+                    f_int_ai = np.sum(P[i, :] * dN_dX[:, a]) * dV
+                    f_ext_ai = f_gp[i] * N[a] * dV
+                    Re[dof_ai] += f_int_ai - f_ext_ai
+
+            for a in range(n_local):
+                for i in range(dim):
+                    dof_ai = a * dim + i
+                    for b in range(n_local):
+                        for k in range(dim):
+                            dof_bk = b * dim + k
+                            k_val = 0.0
+                            for j in range(dim):
+                                for l in range(dim):
+                                    k_val += C4[i, j, k, l] * dN_dX[j, a] * dN_dX[l, b]
+                            Ke[dof_ai, dof_bk] += k_val * dV
+
+        return Re, Ke

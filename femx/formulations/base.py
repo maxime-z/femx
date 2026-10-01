@@ -26,11 +26,12 @@ class Formulation(ABC, Generic[T_Material]):
         elem_coords: ndarray,
         quadrature_pts: ndarray,
         quadrature_wts: ndarray,
-        elem_basis: Optional[ElementBasis] = None,
+        elem_basis: ElementBasis,
         **kwargs
     ) -> Tuple[ndarray, ndarray, ndarray]:
         """
         Compute element stiffness matrix Ke, mass matrix Me, and load vector fe.
+        ``elem_basis`` is required; the assembler chooses LagrangeQuad, LagrangeHex, or NurbsBasis.
         """
         pass
 
@@ -42,7 +43,7 @@ class Formulation(ABC, Generic[T_Material]):
         pass
 
     @abstractmethod
-    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None):
+    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype = None, body_load=None):
         """
         Stage I Batch-Map TensorGalerkin contraction.
         Returns:

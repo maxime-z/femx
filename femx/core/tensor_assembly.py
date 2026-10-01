@@ -11,7 +11,8 @@ def compute_batch_map_unified(
     mesh: Mesh,
     formulation,
     device: str = "cpu",
-    dtype: torch.dtype = torch.float64
+    dtype: torch.dtype = torch.float64,
+    body_load=None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Unified Stage I Batch-Map Engine using true physical continuum mechanics tensor orders.
@@ -24,7 +25,9 @@ def compute_batch_map_unified(
     tensors = formulation.get_physical_tensors(geom, device=device, dtype=dtype)
     
     # 3. Unified Contraction delegated to Formulation
-    K_local, M_local, F_local = formulation.compute_batch_map(geom, tensors, device=device, dtype=dtype)
+    K_local, M_local, F_local = formulation.compute_batch_map(
+        geom, tensors, device=device, dtype=dtype, body_load=body_load,
+    )
         
     return K_local, M_local, F_local
 
@@ -34,10 +37,14 @@ def assemble_system_tensor(
     field_name: str = None,
     routing: RoutingData = None,
     device: str = "cpu",
-    dtype: torch.dtype = torch.float64
+    dtype: torch.dtype = torch.float64,
+    body_load=None,
 ) -> Tuple[sp.csr_matrix, sp.csr_matrix, ndarray, torch.Tensor, torch.Tensor]:
     """
     Full TensorGalerkin Monolithic Assembly using Unified Batch-Map and SpMM Sparse-Reduce.
+
+    ``body_load`` uses the same forms as ``femx.core.loads.sample_body_load``.
+    Coupled thermoelasticity takes ``{"u": ..., "T": ...}``.
     """
     mesh = dof_map.geometry
     
@@ -52,7 +59,9 @@ def assemble_system_tensor(
         routing = build_routing_matrices(mesh, dof_map, field_name, device=device, dtype=dtype)
         
     # 2. Stage I: Unified Batch-Map
-    K_local, M_local, F_local = compute_batch_map_unified(mesh, formulation, device=device, dtype=dtype)
+    K_local, M_local, F_local = compute_batch_map_unified(
+        mesh, formulation, device=device, dtype=dtype, body_load=body_load,
+    )
         
     # 3. Stage II: Unified Sparse-Reduce via SpMM
     m_K = K_local.reshape(-1, 1) # (E * k^2, 1)

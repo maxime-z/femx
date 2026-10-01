@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Tuple
-from femx.backends.numpy_backend import ndarray, array, invert_matrix, determinant
+from femx.backends.numpy_backend import ndarray, array, zeros, invert_matrix, determinant
 from femx.basis.element import ElementBasis
-from femx.core.quadrature import get_quadrature_2d, get_quadrature_triangle
+from femx.core.quadrature import get_quadrature_2d, get_quadrature_3d, get_quadrature_triangle
 
 class LagrangeQuad(ElementBasis):
     """
@@ -181,4 +181,76 @@ class LagrangeTriangle(ElementBasis):
         n_pts = 1 if self.p == 1 else 3
         return get_quadrature_triangle(n_pts)
 
+
+class LagrangeHex(ElementBasis):
+    """
+    Trilinear 8-node hexahedral Lagrange element (H1).
+    Reference domain [-1, 1]^3.
+
+    Node ordering:
+        7-------6
+       /|      /|
+      4-------5 |
+      | 3-----|-2
+      |/      |/
+      0-------1
+    """
+
+    def __init__(self, p: int = 1):
+        if p != 1:
+            raise ValueError(f"LagrangeHex currently supports p=1 only, got {p}")
+        self.p = p
+        self._ref_nodes = array([
+            [-1.0, -1.0, -1.0],
+            [ 1.0, -1.0, -1.0],
+            [ 1.0,  1.0, -1.0],
+            [-1.0,  1.0, -1.0],
+            [-1.0, -1.0,  1.0],
+            [ 1.0, -1.0,  1.0],
+            [ 1.0,  1.0,  1.0],
+            [-1.0,  1.0,  1.0],
+        ])
+
+    @property
+    def n_dofs_per_element(self) -> int:
+        return 8
+
+    @property
+    def dim(self) -> int:
+        return 3
+
+    def evaluate_shape_functions(self, ref_coords: ndarray) -> ndarray:
+        xi, eta, zeta = ref_coords[0], ref_coords[1], ref_coords[2]
+        nodes = self._ref_nodes
+        return 0.125 * array([
+            (1.0 + nodes[i, 0] * xi) * (1.0 + nodes[i, 1] * eta) * (1.0 + nodes[i, 2] * zeta)
+            for i in range(8)
+        ])
+
+    def evaluate_shape_derivatives(self, ref_coords: ndarray) -> ndarray:
+        xi, eta, zeta = ref_coords[0], ref_coords[1], ref_coords[2]
+        nodes = self._ref_nodes
+        dN = zeros((3, 8))
+        for i in range(8):
+            sx, sy, sz = nodes[i]
+            dN[0, i] = 0.125 * sx * (1.0 + sy * eta) * (1.0 + sz * zeta)
+            dN[1, i] = 0.125 * sy * (1.0 + sx * xi) * (1.0 + sz * zeta)
+            dN[2, i] = 0.125 * sz * (1.0 + sx * xi) * (1.0 + sy * eta)
+        return dN
+
+    def compute_mapping(self, ref_coords: ndarray, elem_coords: ndarray) -> Tuple[ndarray, ndarray, float]:
+        N = self.evaluate_shape_functions(ref_coords)
+        dN_dref = self.evaluate_shape_derivatives(ref_coords)
+
+        J = dN_dref @ elem_coords
+        detJ = float(determinant(J))
+        if detJ <= 0.0:
+            raise ValueError(f"Jacobian determinant is non-positive: {detJ}")
+
+        invJ = invert_matrix(J)
+        dN_dphys = invJ @ dN_dref
+        return N, dN_dphys, detJ
+
+    def get_default_quadrature(self) -> Tuple[ndarray, ndarray]:
+        return get_quadrature_3d(2, 2, 2)
 

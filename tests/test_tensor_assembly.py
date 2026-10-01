@@ -59,12 +59,16 @@ def test_tensor_vs_traditional_heat_quads():
     
     # 1. Compare local matrices K_local[e] vs traditional compute_element_matrices
     from femx.core.quadrature import get_quadrature_2d
+    from femx.basis.lagrange import LagrangeQuad
     quad_pts, quad_wts = get_quadrature_2d(2, 2)
-    
+    elem_basis = LagrangeQuad(p=1)
+
     K_local_np = K_local.cpu().numpy()
     for e in range(mesh.n_elements):
         elem_coords = mesh.coords[mesh.cells[e]]
-        Ke_expected, _, _ = formulation.compute_element_matrices(elem_coords, quad_pts, quad_wts)
+        Ke_expected, _, _ = formulation.compute_element_matrices(
+            elem_coords, quad_pts, quad_wts, elem_basis=elem_basis
+        )
         assert np.allclose(K_local_np[e], Ke_expected, atol=1e-6)
         
     # 2. Compare global stiffness matrix K
@@ -107,7 +111,57 @@ def test_tensor_vs_traditional_elasticity():
     
     assert np.allclose(U_tens, U_trad, atol=1e-6)
 
+def test_tensor_body_load_matches_traditional():
+    """Body loads sampled on the tensor path match the element-loop assembler."""
+    mesh = create_sample_mesh_quads()
+
+    def heat_source(xyz):
+        return 4.0 * xyz[0] - xyz[1]
+
+    heat_fields = [FieldSpec(name="T", components=1, location="nodes", unknown=True)]
+    heat_dofs = DofMap(fields=heat_fields, geometry=mesh)
+    heat = HeatConductionFormulation(material=LinearHeatMaterial(rho=1.0, C=1.0, K=10.0))
+    _, _, f_heat_trad = assemble_system_traditional(heat_dofs, heat, field_name="T", body_load=heat_source)
+    _, _, f_heat_tens, _, _ = assemble_system_tensor(heat_dofs, heat, field_name="T", body_load=heat_source)
+    assert np.allclose(f_heat_tens, f_heat_trad, atol=1e-10)
+
+    per_element = np.arange(mesh.n_elements, dtype=float)[:, None]
+    _, _, f_elem_trad = assemble_system_traditional(heat_dofs, heat, field_name="T", body_load=per_element)
+    _, _, f_elem_tens, _, _ = assemble_system_tensor(heat_dofs, heat, field_name="T", body_load=per_element)
+    assert np.allclose(f_elem_tens, f_elem_trad, atol=1e-10)
+
+    elastic_fields = [FieldSpec(name="u", components=2, location="nodes", unknown=True)]
+    elastic_dofs = DofMap(fields=elastic_fields, geometry=mesh)
+    elastic = LinearElasticityFormulation(
+        material=LinearElasticMaterial(rho=1.0, E=2.0e7, nu=0.3), mode="plane_strain",
+    )
+    gravity = np.array([0.0, -9.81])
+    _, _, f_elas_trad = assemble_system_traditional(elastic_dofs, elastic, field_name="u", body_load=gravity)
+    _, _, f_elas_tens, _, _ = assemble_system_tensor(elastic_dofs, elastic, field_name="u", body_load=gravity)
+    assert np.allclose(f_elas_tens, f_elas_trad, atol=1e-8)
+    assert np.linalg.norm(f_elas_trad) > 0.0
+
+    from femx.materials.thermoelastic import LinearThermoelasticMaterial
+    from femx.formulations.thermoelasticity import LinearThermoelasticityFormulation
+
+    coupled_fields = [
+        FieldSpec(name="u", components=2, location="nodes", unknown=True),
+        FieldSpec(name="T", components=1, location="nodes", unknown=True),
+    ]
+    coupled_dofs = DofMap(fields=coupled_fields, geometry=mesh)
+    coupled = LinearThermoelasticityFormulation(
+        material=LinearThermoelasticMaterial(
+            rho=1.0, E=2.0e7, nu=0.3, K_th=10.0, alpha=1.0e-5, C_cap=1.0, T0=20.0,
+        ),
+        mode="plane_stress",
+    )
+    coupled_load = {"u": gravity, "T": heat_source}
+    _, _, f_coupled_trad = assemble_system_traditional(coupled_dofs, coupled, body_load=coupled_load)
+    _, _, f_coupled_tens, _, _ = assemble_system_tensor(coupled_dofs, coupled, body_load=coupled_load)
+    assert np.allclose(f_coupled_tens, f_coupled_trad, atol=1e-6)
+
 if __name__ == "__main__":
     test_tensor_vs_traditional_heat_quads()
     test_tensor_vs_traditional_elasticity()
+    test_tensor_body_load_matches_traditional()
     print("TensorGalerkin local and global validation tests passed successfully!")

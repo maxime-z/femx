@@ -180,7 +180,51 @@ def test_unconstrained_thermal_expansion():
     assert np.isclose(u_y_top, u_expected, rtol=1e-5), f"u_y top is {u_y_top}, expected {u_expected}"
     # print("test_unconstrained_thermal_expansion passed successfully!")
 
+
+def test_manufactured_free_expansion_residual():
+    """
+    Exact free-expansion field T = dT, u = alpha * dT * (x, y) must give
+    near-zero residual R = K U - f, with correct block shapes and symmetry.
+    """
+    mesh = create_quad_mesh_2x2()
+    fields = [
+        FieldSpec(name="u", components=2, location="nodes", unknown=True),
+        FieldSpec(name="T", components=1, location="nodes", unknown=True),
+    ]
+    dof_map = DofMap(fields=fields, geometry=mesh)
+
+    alpha_val = 1.2e-5
+    deltaT = 50.0
+    material = LinearThermoelasticMaterial(
+        rho=7800.0, E=2.0e11, nu=0.3, K_th=50.0, alpha=alpha_val, C_cap=460.0, T0=0.0
+    )
+    formulation = LinearThermoelasticityFormulation(material=material, mode="plane_stress")
+
+    K, M, f = assemble_system_traditional(dof_map, formulation)
+
+    n_nodes = mesh.n_nodes
+    n_u = 2 * n_nodes
+    n_T = n_nodes
+    assert K.shape == (n_u + n_T, n_u + n_T)
+
+    K_uu = K[:n_u, :n_u].toarray()
+    K_TT = K[n_u:, n_u:].toarray()
+    assert np.allclose(K_uu, K_uu.T, rtol=1e-12, atol=1e-4)
+    assert np.allclose(K_TT, K_TT.T, atol=1e-10)
+
+    U = np.zeros(dof_map.n_dofs)
+    for node in range(n_nodes):
+        x, y = mesh.coords[node]
+        U[dof_map.get_dof("u", node, 0)] = alpha_val * deltaT * x
+        U[dof_map.get_dof("u", node, 1)] = alpha_val * deltaT * y
+        U[dof_map.get_dof("T", node, 0)] = deltaT
+
+    R = K @ U - f
+    assert np.linalg.norm(R) < 1e-6
+
+
 if __name__ == "__main__":
     test_thermoelastic_block_matrices()
     test_constrained_thermal_expansion()
     test_unconstrained_thermal_expansion()
+    test_manufactured_free_expansion_residual()

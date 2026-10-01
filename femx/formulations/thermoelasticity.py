@@ -3,6 +3,8 @@ from femx.formulations.base import Formulation
 from femx.backends.numpy_backend import ndarray, zeros, outer, eye
 from femx.materials.thermoelastic import LinearThermoelasticMaterial
 from femx.basis.element import ElementBasis
+from femx.core.loads import sample_body_load, sample_body_load_batch, split_coupled_body_load
+from femx.core.tensor_geometry import integrate_nodal_source, quadrature_coordinates
 
 class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]):
     """
@@ -20,12 +22,10 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         elem_coords: ndarray,
         quadrature_pts: ndarray,
         quadrature_wts: ndarray,
-        elem_basis: Optional[ElementBasis] = None,
-        is_nurbs: bool = False,
-        patch = None,
-        span_u: int = 0,
-        span_v: int = 0,
-        body_load = None
+        elem_basis: ElementBasis,
+        body_load=None,
+        elem_idx: int = 0,
+        **kwargs
     ):
         """
         Compute coupled local element stiffness Ke, mass Me, and forcing vector fe.
@@ -46,19 +46,16 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         rho = self.material.get_property("rho")
         C_cap = self.material.get_property("C_cap")
         T0 = self.material.get_property("T0")
-        
-        if elem_basis is None and not is_nurbs:
-            from femx.basis.lagrange import LagrangeQuad
-            elem_basis = LagrangeQuad(p=1)
+        load_u, load_T = split_coupled_body_load(body_load)
+        spatial_dim = 2
 
-        for gp, w in zip(quadrature_pts, quadrature_wts):
-            if is_nurbs and getattr(elem_basis, 'compute_mapping', None) is None:
-                from femx.basis.nurbs import compute_nurbs_mapping
-                N, dN_dphys, detJ = compute_nurbs_mapping(gp, patch, span_u, span_v)
-            else:
-                N, dN_dphys, detJ = elem_basis.compute_mapping(gp, elem_coords)
+        for q, (gp, w) in enumerate(zip(quadrature_pts, quadrature_wts)):
+            N, dN_dphys, detJ = elem_basis.compute_mapping(gp, elem_coords)
                 
             dV = detJ * w
+            xyz = N @ elem_coords
+            f_u = sample_body_load(load_u, xyz, elem_idx=elem_idx, q_idx=q, n_comp=spatial_dim)
+            f_T = sample_body_load(load_T, xyz, elem_idx=elem_idx, q_idx=q, n_comp=1)
             
             # 1. Mechanical Strain-Displacement Matrix B_u: shape (3, n_u_dofs)
             B_u = zeros((3, n_u_dofs))
@@ -94,6 +91,11 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
                     
                     m_val_T = rho * C_cap * N[i] * N[j] * dV
                     Me[n_u_dofs + i, n_u_dofs + j] += m_val_T
+
+            for i in range(n_local):
+                fe[2 * i] += f_u[0] * N[i] * dV
+                fe[2 * i + 1] += f_u[1] * N[i] * dV
+                fe[n_u_dofs + i] += f_T[0] * N[i] * dV
                     
             # Forcing offset term due to T0: f_u = - K_uT * T0_vec
             if T0 != 0.0:
@@ -133,7 +135,7 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         
         return C_4th, M_th, K_th, M_0th_u, M_0th_T, T0
 
-    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype=None):
+    def compute_batch_map(self, geom, tensors, device: str = "cpu", dtype=None, body_load=None):
         import torch
         C_4th, M_th, K_th, M_0th_u, M_0th_T, T0 = tensors
         u_dofs = geom.nen * geom.dim
@@ -169,6 +171,16 @@ class LinearThermoelasticityFormulation(Formulation[LinearThermoelasticMaterial]
         M_local[:, u_dofs:total_dofs, u_dofs:total_dofs] = M_TT
 
         F_local = torch.zeros((geom.E, total_dofs), dtype=dtype, device=device)
+        load_u, load_T = split_coupled_body_load(body_load)
+        xyz = quadrature_coordinates(geom)
+        f_u = torch.tensor(
+            sample_body_load_batch(load_u, xyz, n_comp=geom.dim), dtype=dtype, device=device,
+        )
+        f_T = torch.tensor(
+            sample_body_load_batch(load_T, xyz, n_comp=1), dtype=dtype, device=device,
+        )
+        F_local[:, 0:u_dofs] += integrate_nodal_source(geom, f_u)
+        F_local[:, u_dofs:total_dofs] += integrate_nodal_source(geom, f_T)
         if abs(T0) > 1e-12:
             T0_vec = torch.full((geom.E, T_dofs), fill_value=T0, dtype=dtype, device=device)
             F_local[:, 0:u_dofs] -= torch.einsum('eij,ej->ei', K_uT, T0_vec)

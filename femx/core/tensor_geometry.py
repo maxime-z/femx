@@ -75,3 +75,15 @@ def evaluate_batched_geometry(mesh: Mesh, device: str = "cpu", dtype: torch.dtyp
     return BatchedGeometry(
         X=X, J=J, detJ=detJ, G=G, W_hat=W_hat, B_hat=B_hat, E=E, nen=nen, dim=dim, Q=Q
     )
+
+
+def quadrature_coordinates(geom: BatchedGeometry) -> np.ndarray:
+    """Physical coordinates of every Gauss point, shape ``(n_elem, n_q, dim)``."""
+    xyz = torch.einsum("qa,ead->eqd", geom.B_hat, geom.X)
+    return xyz.detach().cpu().numpy()
+
+
+def integrate_nodal_source(geom: BatchedGeometry, f_gp: torch.Tensor) -> torch.Tensor:
+    """Integrate ``N_a * f * dV`` into node-major element forces, shape ``(E, nen * n_comp)``."""
+    nodal = torch.einsum("q,eq,eqc,qa->eac", geom.W_hat, geom.detJ, f_gp, geom.B_hat)
+    return nodal.reshape(geom.E, geom.nen * f_gp.shape[-1])

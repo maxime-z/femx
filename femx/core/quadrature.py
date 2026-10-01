@@ -29,6 +29,28 @@ def get_quadrature_2d(n_points_u: int, n_points_v: int) -> Tuple[ndarray, ndarra
             
     return array(pts_2d), array(w_2d)
 
+def get_quadrature_3d(n_points_u: int, n_points_v: int, n_points_w: int) -> Tuple[ndarray, ndarray]:
+    """
+    Get tensor-product Gauss-Legendre quadrature points and weights in 3D for [-1, 1]^3.
+    Returns:
+        points_3d: array of shape (n_u * n_v * n_w, 3)
+        weights_3d: array of shape (n_u * n_v * n_w,)
+    """
+    pts_u, w_u = get_quadrature_1d(n_points_u)
+    pts_v, w_v = get_quadrature_1d(n_points_v)
+    pts_w, w_w = get_quadrature_1d(n_points_w)
+
+    pts_3d = []
+    w_3d = []
+    for pw, ww in zip(pts_w, w_w):
+        for pv, wv in zip(pts_v, w_v):
+            for pu, wu in zip(pts_u, w_u):
+                pts_3d.append([pu, pv, pw])
+                w_3d.append(wu * wv * ww)
+
+    return array(pts_3d), array(w_3d)
+
+
 def get_quadrature_triangle(n_points: int = 1) -> Tuple[ndarray, ndarray]:
     """
     Get quadrature points and weights for reference triangle (xi >= 0, eta >= 0, xi + eta <= 1).
