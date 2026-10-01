@@ -78,3 +78,22 @@ class NeoHookeanMaterial(Material):
             
             C4 = term1 + term2 + term3
             return P, C4
+
+
+def first_piola_torch(F, lambda_: float, mu: float):
+    """First Piola-Kirchhoff stress for compressible Neo-Hookean (torch).
+
+    ``F`` may be ``(dim, dim)`` or batched ``(..., dim, dim)``. Matches
+    :meth:`NeoHookeanMaterial.update` without returning the analytic tangent.
+    """
+    import torch
+
+    J = torch.linalg.det(F)
+    if torch.any(J <= 0):
+        raise ValueError("Inverted element detected: J <= 0")
+    F_inv_T = torch.linalg.inv(F).transpose(-1, -2)
+    lnJ = torch.log(J)
+    while lnJ.ndim < F.ndim:
+        lnJ = lnJ.unsqueeze(-1)
+    return mu * F + (lambda_ * lnJ - mu) * F_inv_T
+

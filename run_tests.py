@@ -44,6 +44,14 @@ from tests.test_nurbs import (
     test_quadrature_precision,
 )
 from tests.test_elasticity_nurbs import test_elasticity_nurbs_matches_q1_patch
+from tests.test_torch_kernels import (
+    test_first_piola_torch_matches_numpy,
+    test_heat_torch_residual_and_jacrev,
+    test_elasticity_torch_residual_and_jacrev,
+    test_neohookean_torch_residual_jacrev_and_fd,
+    test_compiled_neohookean_newton_step,
+    test_torch_residual_on_accelerators,
+)
 
 def run_test(name, func):
     print(f"Running {name:50s}...", end="")
@@ -89,6 +97,12 @@ def main():
         "test_positive_jacobian_quarter_annulus": test_positive_jacobian_quarter_annulus,
         "test_nurbs_quadrature_cache": test_nurbs_quadrature_cache,
         "test_quadrature_precision": test_quadrature_precision,
+        "test_first_piola_torch_matches_numpy": test_first_piola_torch_matches_numpy,
+        "test_heat_torch_residual_and_jacrev": test_heat_torch_residual_and_jacrev,
+        "test_elasticity_torch_residual_and_jacrev": test_elasticity_torch_residual_and_jacrev,
+        "test_neohookean_torch_residual_jacrev_and_fd": test_neohookean_torch_residual_jacrev_and_fd,
+        "test_compiled_neohookean_newton_step": test_compiled_neohookean_newton_step,
+        "test_torch_residual_on_accelerators": test_torch_residual_on_accelerators,
     }
 
     success = True
