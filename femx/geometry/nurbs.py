@@ -245,21 +245,20 @@ def compute_bezalfs(p: int, t: int) -> np.ndarray:
 
 def degree_elevate_curve(p: int, U: KnotVector, Pw: np.ndarray, t: int) -> Tuple[KnotVector, np.ndarray]:
     n = len(Pw) - 1
-    m = n + p + 1
+    m = len(U) - 1
     ph = p + t
     
     bezalfs = compute_bezalfs(p, t)
     
     bpts = np.zeros((p + 1, Pw.shape[1]), dtype=np.float64)
     ebpts = np.zeros((ph + 1, Pw.shape[1]), dtype=np.float64)
-    Nextbpts = np.zeros((p - 1, Pw.shape[1]), dtype=np.float64)
-    alphas = np.zeros(p - 1, dtype=np.float64)
+    Nextbpts = np.zeros((p - 1, Pw.shape[1]), dtype=np.float64) if p > 1 else np.zeros((0, Pw.shape[1]))
+    alphas = np.zeros(max(p - 1, 0), dtype=np.float64)
     
-    max_mh = m + t * (m // p + 1)
+    # Each existing knot can gain multiplicity t, and the tail writes ph+1 end knots.
+    max_mh = (m + 1) * (t + 1) + ph + 1
     Uh = np.zeros(max_mh, dtype=np.float64)
     Qw = np.zeros((max_mh, Pw.shape[1]), dtype=np.float64)
-    
-    m = len(U) - 1
     
     mh = ph
     kind = ph + 1
@@ -315,31 +314,30 @@ def degree_elevate_curve(p: int, U: KnotVector, Pw: np.ndarray, t: int) -> Tuple
             for j in range(max(0, i_idx - t), mpi + 1):
                 ebpts[i_idx] += bezalfs[i_idx, j] * bpts[j]
                 
-        if oldr > 0:
+        if oldr > 1:
             first = kind - 2
             last = kind
             den = ub - ua
-            bet = (ub - Uh[kind-1]) / den
-            for tr in range(1, oldr + 1):
+            bet = (ub - Uh[kind - 1]) / den
+            for tr in range(1, oldr):
                 i_idx = first
                 j = last
                 kj = j - kind + 1
                 while j - i_idx > tr:
                     if i_idx < cind:
                         alf = (ub - Uh[i_idx]) / (ua - Uh[i_idx])
-                        Qw[i_idx] = alf * Qw[i_idx] + (1.0 - alf) * Qw[i_idx-1]
+                        Qw[i_idx] = alf * Qw[i_idx] + (1.0 - alf) * Qw[i_idx - 1]
                     if j >= lbz:
                         if j - tr <= kind - ph + oldr:
-                            gam = (ub - Uh[j-tr]) / den
+                            gam = (ub - Uh[j - tr]) / den
                         else:
                             gam = bet
-                        ebpts[kj] = gam * ebpts[kj] + (1.0 - gam) * ebpts[kj+1]
+                        ebpts[kj] = gam * ebpts[kj] + (1.0 - gam) * ebpts[kj + 1]
                     i_idx += 1
                     j -= 1
                     kj -= 1
-            first = kind - 1 - oldr
-            for i_idx in range(first, cind):
-                Qw[i_idx] = Qw[i_idx]
+                first -= 1
+                last += 1
             
         if a != p:
             for i_idx in range(ph - oldr):

@@ -72,8 +72,18 @@ def test_knot_insertion():
     bez_patch = decompose_to_beziers(patch)
     assert len(bez_patch.knot_vectors[0]) == 8
 
+def curve_elevation_error(patch, t: int, n: int = 41) -> float:
+    elevated = degree_elevate(patch, 0, t)
+    u0 = float(patch.knot_vectors[0][0])
+    u1 = float(patch.knot_vectors[0][-1])
+    us = np.linspace(u0, u1, n)
+    before = np.array([eval_curve(patch, u) for u in us])
+    after = np.array([eval_curve(elevated, u) for u in us])
+    return float(np.max(np.linalg.norm(after - before, axis=1)))
+
+
 def test_degree_elevation():
-    # Multi-span: structural checks
+    # Multi-span quadratic: structure and geometry
     patch = get_simple_patch()
     elevated = degree_elevate(patch, 0, 1)
     assert elevated.degrees[0] == 3
@@ -81,16 +91,27 @@ def test_degree_elevation():
     assert np.allclose(uk, [0., 1., 2.])
     assert np.array_equal(counts, [4, 2, 4])
     assert len(elevated.control_points) == 6
+    assert curve_elevation_error(patch, 1) < 1e-12
+    assert curve_elevation_error(patch, 2) < 1e-12
+
+    # Cubic with two simple interior knots, so the knot-removal loop runs
+    U_cubic = KnotVector([0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 3.0, 3.0])
+    Pw_cubic = np.array([
+        [0.0, 0.0, 1.0],
+        [1.0, 2.0, 1.0],
+        [2.0, 1.5, 1.0],
+        [3.0, 0.5, 1.0],
+        [4.0, 2.5, 1.0],
+        [5.0, 1.0, 1.0],
+    ])
+    cubic = NurbsPatch.from_weighted_control_points((3,), (U_cubic,), Pw_cubic)
+    assert curve_elevation_error(cubic, 1) < 1e-12
 
     # Pointwise geometry preservation on a single Bezier segment
     U = KnotVector([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
     Pw = np.array([[0.0, 0.0, 1.0], [0.5, 1.0, 1.0], [1.0, 0.0, 1.0]])
     bezier = NurbsPatch.from_weighted_control_points((2,), (U,), Pw)
-    elev_bez = degree_elevate(bezier, 0, 1)
-    us = np.linspace(0.0, 1.0, 21)
-    pts_before = np.array([eval_curve(bezier, u) for u in us])
-    pts_after = np.array([eval_curve(elev_bez, u) for u in us])
-    assert np.max(np.linalg.norm(pts_after - pts_before, axis=1)) < 1e-12
+    assert curve_elevation_error(bezier, 1) < 1e-12
 
 def get_quarter_annulus():
     w = 1.0 / np.sqrt(2.0)
