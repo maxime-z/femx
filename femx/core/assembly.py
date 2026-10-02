@@ -4,8 +4,19 @@ from femx.core.dofs import DofMap
 from femx.core.mesh import Mesh, NurbsPatch
 from femx.core.quadrature import get_quadrature_2d, get_quadrature_3d
 from femx.formulations.base import Formulation
-from femx.basis.lagrange import LagrangeQuad, LagrangeHex
+from femx.basis.lagrange import LagrangeQuad, LagrangeHex, hex_degree_from_nen
 from femx.basis.nurbs import NurbsBasis
+
+
+def _mesh_element_basis(spatial_dim: int, nen: int):
+    if spatial_dim == 3:
+        p = hex_degree_from_nen(nen)
+        basis = LagrangeHex(p=p)
+        return basis, basis.get_default_quadrature()
+    if nen == 4:
+        basis = LagrangeQuad(p=1)
+        return basis, get_quadrature_2d(2, 2)
+    raise ValueError(f"Unsupported 2D mesh with nen={nen}")
 
 def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str = None, body_load=None):
     """
@@ -42,9 +53,8 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str =
         spatial_dim = coords.shape[1]
         nen = cells.shape[1]
 
-        if spatial_dim == 3 and nen == 8:
-            quad_pts, quad_wts = get_quadrature_3d(2, 2, 2)
-            elem_basis = LagrangeHex(p=1)
+        if spatial_dim == 3:
+            elem_basis, (quad_pts, quad_wts) = _mesh_element_basis(spatial_dim, nen)
         else:
             quad_pts, quad_wts = get_quadrature_2d(2, 2)
             elem_basis = LagrangeQuad(p=1)
@@ -70,38 +80,72 @@ def assemble_system(dof_map: DofMap, formulation: Formulation, field_name: str =
             np.add.at(f_global, elem_dofs, fe)
 
     elif isinstance(geometry, NurbsPatch):
-        from femx.basis.nurbs import NurbsQuadratureCache
-        cache = NurbsQuadratureCache(geometry)
-        quad_pts, quad_wts = cache.quad_pts, cache.quad_wts
-        spans = cache.spans
+        if geometry.parametric_dim == 3:
+            from femx.basis.nurbs import NurbsBasis as _NB
+            p_u, p_v, p_w = geometry.degrees
+            quad_pts, quad_wts = get_quadrature_3d(p_u + 1, p_v + 1, p_w + 1)
+            spans = geometry.get_element_spans()
+            flat_cp_coords = geometry.flatten_control_points()
 
-        flat_cp_coords = geometry.control_points.transpose(1, 0, 2).reshape((-1, geometry.physical_dim))
+            for elem_idx, span in enumerate(spans):
+                span_u, span_v, span_w = span
+                cell = geometry.get_element_control_points(span_u, span_v, span_w)
+                elem_coords = flat_cp_coords[cell]
+                elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
+                elem_basis = _NB(geometry, span_u, span_v, span_w)
 
-        for elem_idx, (span_u, span_v) in enumerate(spans):
-            cell = geometry.get_element_control_points(span_u, span_v)
-            elem_coords = flat_cp_coords[cell]
-            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
-            elem_basis = NurbsBasis(geometry, span_u, span_v, cache=cache)
+                Ke, Me, fe = formulation.compute_element_matrices(
+                    elem_coords=elem_coords,
+                    quadrature_pts=quad_pts,
+                    quadrature_wts=quad_wts,
+                    elem_basis=elem_basis,
+                    body_load=body_load,
+                    elem_idx=elem_idx,
+                )
 
-            Ke, Me, fe = formulation.compute_element_matrices(
-                elem_coords=elem_coords,
-                quadrature_pts=quad_pts,
-                quadrature_wts=quad_wts,
-                elem_basis=elem_basis,
-                body_load=body_load,
-                elem_idx=elem_idx,
-            )
+                r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+                rows.extend(r.ravel())
+                cols.extend(c.ravel())
+                data.extend(Ke.ravel())
 
-            r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
-            rows.extend(r.ravel())
-            cols.extend(c.ravel())
-            data.extend(Ke.ravel())
+                mass_rows.extend(r.ravel())
+                mass_cols.extend(c.ravel())
+                mass_data.extend(Me.ravel())
 
-            mass_rows.extend(r.ravel())
-            mass_cols.extend(c.ravel())
-            mass_data.extend(Me.ravel())
+                np.add.at(f_global, elem_dofs, fe)
+        else:
+            from femx.basis.nurbs import NurbsQuadratureCache
+            cache = NurbsQuadratureCache(geometry)
+            quad_pts, quad_wts = cache.quad_pts, cache.quad_wts
+            spans = cache.spans
 
-            np.add.at(f_global, elem_dofs, fe)
+            flat_cp_coords = geometry.flatten_control_points()
+
+            for elem_idx, (span_u, span_v) in enumerate(spans):
+                cell = geometry.get_element_control_points(span_u, span_v)
+                elem_coords = flat_cp_coords[cell]
+                elem_dofs = dof_map.get_element_dofs_multi(field_names, cell)
+                elem_basis = NurbsBasis(geometry, span_u, span_v, cache=cache)
+
+                Ke, Me, fe = formulation.compute_element_matrices(
+                    elem_coords=elem_coords,
+                    quadrature_pts=quad_pts,
+                    quadrature_wts=quad_wts,
+                    elem_basis=elem_basis,
+                    body_load=body_load,
+                    elem_idx=elem_idx,
+                )
+
+                r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+                rows.extend(r.ravel())
+                cols.extend(c.ravel())
+                data.extend(Ke.ravel())
+
+                mass_rows.extend(r.ravel())
+                mass_cols.extend(c.ravel())
+                mass_data.extend(Me.ravel())
+
+                np.add.at(f_global, elem_dofs, fe)
 
     else:
         raise TypeError("Geometry must be Mesh or NurbsPatch")
@@ -132,9 +176,8 @@ def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, 
         spatial_dim = coords.shape[1]
         nen = cells.shape[1]
 
-        if spatial_dim == 3 and nen == 8:
-            quad_pts, quad_wts = get_quadrature_3d(2, 2, 2)
-            elem_basis = LagrangeHex(p=1)
+        if spatial_dim == 3:
+            elem_basis, (quad_pts, quad_wts) = _mesh_element_basis(spatial_dim, nen)
         else:
             quad_pts, quad_wts = get_quadrature_2d(2, 2)
             elem_basis = LagrangeQuad(p=1)
@@ -147,6 +190,8 @@ def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, 
             kwargs = {"elem_basis": elem_basis, "state": state, "elem_idx": elem_idx}
             if "p" in field_names and "p" in state.values:
                 kwargs["elem_p"] = state.values["p"][cell]
+                kwargs["elem_basis_u"] = elem_basis
+                kwargs["elem_basis_p"] = elem_basis
 
             Re, Ke = formulation.compute_element_residual_and_tangent(
                 elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
@@ -160,51 +205,85 @@ def assemble_nonlinear_system(dof_map: DofMap, formulation: Formulation, state, 
             np.add.at(R_global, elem_dofs, Re)
 
     elif isinstance(geometry, NurbsPatch):
-        quad_pts, quad_wts = get_quadrature_2d(geometry.p_u + 1, geometry.p_v + 1)
-        spans = geometry.get_element_spans()
-        flat_cp_coords = geometry.control_points.transpose(1, 0, 2).reshape((-1, geometry.physical_dim))
+        if geometry.parametric_dim == 3:
+            p_u, p_v, p_w = geometry.degrees
+            quad_pts, quad_wts = get_quadrature_3d(p_u + 1, p_v + 1, p_w + 1)
+            spans = geometry.get_element_spans()
+            flat_cp_coords = geometry.flatten_control_points()
 
-        for elem_idx, (span_u, span_v) in enumerate(spans):
-            cell_u = geometry.get_element_control_points(span_u, span_v)
-            elem_coords = flat_cp_coords[cell_u]
+            for elem_idx, span in enumerate(spans):
+                span_u, span_v, span_w = span
+                cell_u = geometry.get_element_control_points(span_u, span_v, span_w)
+                elem_coords = flat_cp_coords[cell_u]
+                cell_dict = cell_u
+                elem_dofs = dof_map.get_element_dofs_multi(field_names, cell_dict)
+                elem_u = state.values["u"][cell_u]
+                basis = NurbsBasis(geometry, span_u, span_v, span_w)
+                kwargs = {
+                    "elem_basis": basis,
+                    "elem_basis_u": basis,
+                    "elem_basis_p": basis,
+                    "state": state,
+                    "elem_idx": elem_idx,
+                }
+                if "p" in field_names and "p" in state.values:
+                    kwargs["elem_p"] = state.values["p"][cell_u]
 
-            p_geom = dof_map.geometries.get("p", geometry)
-            if p_geom is geometry:
-                cell_p = cell_u
-                span_u_p, span_v_p = span_u, span_v
-            else:
-                u_c = 0.5 * (geometry.knot_vectors[0].knots[span_u] + geometry.knot_vectors[0].knots[span_u+1])
-                v_c = 0.5 * (geometry.knot_vectors[1].knots[span_v] + geometry.knot_vectors[1].knots[span_v+1])
-                span_u_p = p_geom.knot_vectors[0].find_span(p_geom.degrees[0], u_c)
-                span_v_p = p_geom.knot_vectors[1].find_span(p_geom.degrees[1], v_c)
-                cell_p = p_geom.get_element_control_points(span_u_p, span_v_p)
+                Re, Ke = formulation.compute_element_residual_and_tangent(
+                    elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
+                )
 
-            cell_dict = {"u": cell_u, "p": cell_p} if "p" in field_names else cell_u
-            elem_dofs = dof_map.get_element_dofs_multi(field_names, cell_dict)
+                r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+                rows.extend(r.ravel())
+                cols.extend(c.ravel())
+                data.extend(Ke.ravel())
+                np.add.at(R_global, elem_dofs, Re)
+        else:
+            quad_pts, quad_wts = get_quadrature_2d(geometry.p_u + 1, geometry.p_v + 1)
+            spans = geometry.get_element_spans()
+            flat_cp_coords = geometry.flatten_control_points()
 
-            elem_u = state.values["u"][cell_u]
-            kwargs = {}
-            if "p" in field_names and "p" in state.values:
-                kwargs["elem_p"] = state.values["p"][cell_p]
+            for elem_idx, (span_u, span_v) in enumerate(spans):
+                cell_u = geometry.get_element_control_points(span_u, span_v)
+                elem_coords = flat_cp_coords[cell_u]
 
-            kwargs["elem_basis_u"] = NurbsBasis(geometry, span_u, span_v)
-            if "p" in field_names:
-                kwargs["elem_basis_p"] = NurbsBasis(p_geom, span_u_p, span_v_p)
-            else:
-                kwargs["elem_basis"] = NurbsBasis(geometry, span_u, span_v)
-            kwargs["state"] = state
-            kwargs["elem_idx"] = elem_idx
+                p_geom = dof_map.geometries.get("p", geometry)
+                if p_geom is geometry:
+                    cell_p = cell_u
+                    span_u_p, span_v_p = span_u, span_v
+                else:
+                    u_c = 0.5 * (geometry.knot_vectors[0].knots[span_u] + geometry.knot_vectors[0].knots[span_u+1])
+                    v_c = 0.5 * (geometry.knot_vectors[1].knots[span_v] + geometry.knot_vectors[1].knots[span_v+1])
+                    span_u_p = p_geom.knot_vectors[0].find_span(p_geom.degrees[0], u_c)
+                    span_v_p = p_geom.knot_vectors[1].find_span(p_geom.degrees[1], v_c)
+                    cell_p = p_geom.get_element_control_points(span_u_p, span_v_p)
 
-            Re, Ke = formulation.compute_element_residual_and_tangent(
-                elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
-            )
+                cell_dict = {"u": cell_u, "p": cell_p} if "p" in field_names else cell_u
+                elem_dofs = dof_map.get_element_dofs_multi(field_names, cell_dict)
 
-            r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
-            rows.extend(r.ravel())
-            cols.extend(c.ravel())
-            data.extend(Ke.ravel())
+                elem_u = state.values["u"][cell_u]
+                kwargs = {}
+                if "p" in field_names and "p" in state.values:
+                    kwargs["elem_p"] = state.values["p"][cell_p]
 
-            np.add.at(R_global, elem_dofs, Re)
+                kwargs["elem_basis_u"] = NurbsBasis(geometry, span_u, span_v)
+                if "p" in field_names:
+                    kwargs["elem_basis_p"] = NurbsBasis(p_geom, span_u_p, span_v_p)
+                else:
+                    kwargs["elem_basis"] = NurbsBasis(geometry, span_u, span_v)
+                kwargs["state"] = state
+                kwargs["elem_idx"] = elem_idx
+
+                Re, Ke = formulation.compute_element_residual_and_tangent(
+                    elem_coords, elem_u, quad_pts, quad_wts, body_load=body_load, **kwargs
+                )
+
+                r, c = np.meshgrid(elem_dofs, elem_dofs, indexing='ij')
+                rows.extend(r.ravel())
+                cols.extend(c.ravel())
+                data.extend(Ke.ravel())
+
+                np.add.at(R_global, elem_dofs, Re)
 
     else:
         raise TypeError("Geometry must be Mesh or NurbsPatch")

@@ -5,12 +5,17 @@ from femx.core.mesh import Mesh
 from femx.core.fields import FieldSpec
 from femx.core.dofs import DofMap
 from femx.core.assembly import assemble_system as assemble_system_traditional
-from femx.core.tensor_assembly import assemble_system_tensor
+from femx.core.assembly import assemble_nonlinear_system
+from femx.core.tensor_assembly import assemble_system_tensor, assemble_nonlinear_system_tensor
+from femx.core.state import State
 from femx.materials.linear_heat import LinearHeatMaterial
 from femx.materials.linear_elastic import LinearElasticMaterial
+from femx.materials.hyperelastic import NeoHookeanMaterial
 from femx.formulations.heat import HeatConductionFormulation
 from femx.formulations.elasticity import LinearElasticityFormulation
+from femx.formulations.hyperelasticity import HyperelasticFormulation
 from femx.solvers.linear import solve_system
+import torch
 
 def create_sample_mesh_quads() -> Mesh:
     """Create a 2x2 grid of bilinear Q1 quad elements."""
@@ -160,8 +165,99 @@ def test_tensor_body_load_matches_traditional():
     _, _, f_coupled_tens, _, _ = assemble_system_tensor(coupled_dofs, coupled, body_load=coupled_load)
     assert np.allclose(f_coupled_tens, f_coupled_trad, atol=1e-6)
 
+
+def test_nonlinear_tensor_vs_traditional_neohookean_quads():
+    """Torch analytic Neo-Hookean K(U), R(U) match NumPy element-loop assembly."""
+    mesh = create_sample_mesh_quads()
+    fields = [FieldSpec(name="u", components=2, location="nodes", unknown=True)]
+    dof_map = DofMap(fields=fields, geometry=mesh)
+    material = NeoHookeanMaterial(rho=1.0, E=1.0e5, nu=0.3)
+    formulation = HyperelasticFormulation(material=material)
+
+    state = State()
+    state.initialize_field("u", mesh.n_nodes, 2)
+    for node in range(mesh.n_nodes):
+        x, y = mesh.coords[node]
+        state.values["u"][node, 0] = 0.05 * y
+        state.values["u"][node, 1] = 0.02 * x
+
+    K_np, R_np = assemble_nonlinear_system(dof_map, formulation, state)
+    K_t, R_t = assemble_nonlinear_system_tensor(
+        dof_map, formulation, state, device="cpu", dtype=torch.float64,
+    )
+    assert np.allclose(R_t, R_np, atol=1e-8)
+    assert np.allclose(K_t.toarray(), K_np.toarray(), atol=1e-6)
+
+
+def test_nonlinear_tensor_vs_traditional_neohookean_hex():
+    """Q1 hex Neo-Hookean tensor assembly matches NumPy (twisting-column topology)."""
+    from examples.twisting_column.problem import create_lagrange_column
+
+    mesh = create_lagrange_column(1, 2, 1, p=1)
+    fields = [FieldSpec(name="u", components=3, location="nodes", unknown=True)]
+    dof_map = DofMap(fields=fields, geometry=mesh)
+    material = NeoHookeanMaterial(rho=1.0, E=1.0e5, nu=0.3)
+    formulation = HyperelasticFormulation(material=material)
+
+    state = State()
+    state.initialize_field("u", mesh.n_nodes, 3)
+    for node in range(mesh.n_nodes):
+        x, y, z = mesh.coords[node]
+        state.values["u"][node] = [0.02 * y, 0.0, -0.01 * y]
+
+    K_np, R_np = assemble_nonlinear_system(dof_map, formulation, state)
+    K_t, R_t = assemble_nonlinear_system_tensor(
+        dof_map, formulation, state, device="cpu", dtype=torch.float64,
+    )
+    assert np.allclose(R_t, R_np, atol=1e-7)
+    assert np.allclose(K_t.toarray(), K_np.toarray(), atol=1e-5)
+
+
+def test_hybrid_newton_step_matches_numpy():
+    """One hybrid Torch Newton step matches NumPy Newton update on a shear block."""
+    from femx.solvers.linear import apply_dirichlet_bcs
+    from femx.backends.numpy_backend import solve_linear
+
+    coords = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    cells = np.array([[0, 1, 2, 3]])
+    mesh = Mesh(coords=coords, cells=cells)
+    fields = [FieldSpec(name="u", components=2, location="nodes", unknown=True)]
+    dof_map = DofMap(fields=fields, geometry=mesh)
+    material = NeoHookeanMaterial(rho=1.0, E=1.0e5, nu=0.3)
+    formulation = HyperelasticFormulation(material=material)
+
+    state = State()
+    state.initialize_field("u", 4, 2)
+    dirichlet_bcs = {
+        dof_map.get_dof("u", 0, 0): 0.0,
+        dof_map.get_dof("u", 0, 1): 0.0,
+        dof_map.get_dof("u", 1, 1): 0.0,
+        dof_map.get_dof("u", 2, 0): 0.1,
+        dof_map.get_dof("u", 3, 0): 0.1,
+    }
+    U = state.pack_vector(dof_map)
+    for dof, val in dirichlet_bcs.items():
+        U[dof] = val
+    state.unpack_vector(U, dof_map)
+
+    K_np, R_np = assemble_nonlinear_system(dof_map, formulation, state)
+    K_t, R_t = assemble_nonlinear_system_tensor(
+        dof_map, formulation, state, device="cpu", dtype=torch.float64,
+    )
+    constrained = list(dirichlet_bcs.keys())
+    delta_bcs = {dof: 0.0 for dof in constrained}
+    K_eff_np, neg_R_np = apply_dirichlet_bcs(K_np, -R_np, delta_bcs, preserve_symmetry=False)
+    K_eff_t, neg_R_t = apply_dirichlet_bcs(K_t, -R_t, delta_bcs, preserve_symmetry=False)
+    dU_np = solve_linear(K_eff_np, neg_R_np)
+    dU_t = solve_linear(K_eff_t, neg_R_t)
+    assert np.allclose(dU_t, dU_np, atol=1e-8)
+
+
 if __name__ == "__main__":
     test_tensor_vs_traditional_heat_quads()
     test_tensor_vs_traditional_elasticity()
     test_tensor_body_load_matches_traditional()
+    test_nonlinear_tensor_vs_traditional_neohookean_quads()
+    test_nonlinear_tensor_vs_traditional_neohookean_hex()
+    test_hybrid_newton_step_matches_numpy()
     print("TensorGalerkin local and global validation tests passed successfully!")

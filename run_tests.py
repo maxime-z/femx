@@ -21,6 +21,9 @@ from tests.test_tensor_assembly import (
     test_tensor_vs_traditional_heat_quads,
     test_tensor_vs_traditional_elasticity,
     test_tensor_body_load_matches_traditional,
+    test_nonlinear_tensor_vs_traditional_neohookean_quads,
+    test_nonlinear_tensor_vs_traditional_neohookean_hex,
+    test_hybrid_newton_step_matches_numpy,
 )
 from tests.test_thermoelasticity import (
     test_thermoelastic_block_matrices,
@@ -52,6 +55,12 @@ from tests.test_torch_kernels import (
     test_compiled_neohookean_newton_step,
     test_torch_residual_on_accelerators,
 )
+from tests.test_twisting_column import (
+    test_lagrange_hex_p2_partition_and_jacobian,
+    test_q1_elasticity_twist_bcs,
+    test_nurbs_degree1_matches_q1_elasticity,
+    test_neohookean_small_angle_and_large_angle_report,
+)
 
 def run_test(name, func):
     print(f"Running {name:50s}...", end="")
@@ -82,6 +91,9 @@ def main():
         "test_tensor_vs_traditional_heat_quads": test_tensor_vs_traditional_heat_quads,
         "test_tensor_vs_traditional_elasticity": test_tensor_vs_traditional_elasticity,
         "test_tensor_body_load_matches_traditional": test_tensor_body_load_matches_traditional,
+        "test_nonlinear_tensor_vs_traditional_neohookean_quads": test_nonlinear_tensor_vs_traditional_neohookean_quads,
+        "test_nonlinear_tensor_vs_traditional_neohookean_hex": test_nonlinear_tensor_vs_traditional_neohookean_hex,
+        "test_hybrid_newton_step_matches_numpy": test_hybrid_newton_step_matches_numpy,
         "test_thermoelastic_block_matrices": test_thermoelastic_block_matrices,
         "test_constrained_thermal_expansion": test_constrained_thermal_expansion,
         "test_unconstrained_thermal_expansion": test_unconstrained_thermal_expansion,
@@ -103,6 +115,10 @@ def main():
         "test_neohookean_torch_residual_jacrev_and_fd": test_neohookean_torch_residual_jacrev_and_fd,
         "test_compiled_neohookean_newton_step": test_compiled_neohookean_newton_step,
         "test_torch_residual_on_accelerators": test_torch_residual_on_accelerators,
+        "test_lagrange_hex_p2_partition_and_jacobian": test_lagrange_hex_p2_partition_and_jacobian,
+        "test_q1_elasticity_twist_bcs": test_q1_elasticity_twist_bcs,
+        "test_nurbs_degree1_matches_q1_elasticity": test_nurbs_degree1_matches_q1_elasticity,
+        "test_neohookean_small_angle_and_large_angle_report": test_neohookean_small_angle_and_large_angle_report,
     }
 
     success = True

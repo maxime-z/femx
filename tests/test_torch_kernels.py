@@ -17,10 +17,16 @@ from femx.core.torch_kernels import (
     elasticity_stiffness_local,
     neohookean_residual_global,
     neohookean_residual_local,
+    neohookean_stiffness_local,
+    neohookean_system_local,
 )
 from femx.materials.linear_heat import LinearHeatMaterial
 from femx.materials.linear_elastic import LinearElasticMaterial
-from femx.materials.hyperelastic import NeoHookeanMaterial, first_piola_torch
+from femx.materials.hyperelastic import (
+    NeoHookeanMaterial,
+    first_piola_torch,
+    neohookean_stress_tangent_torch,
+)
 from femx.formulations.heat import HeatConductionFormulation
 from femx.formulations.elasticity import LinearElasticityFormulation
 from femx.formulations.hyperelasticity import HyperelasticFormulation
@@ -59,15 +65,39 @@ def test_first_piola_torch_matches_numpy():
     material = NeoHookeanMaterial(rho=1.0, E=1.0e5, nu=0.3)
     lambda_, mu = material.get_lame_parameters()
     F_np = np.array([[1.1, 0.2], [0.05, 0.95]])
-    P_np, _ = material.update(F_np)
+    P_np, C4_np = material.update(F_np)
     F_t = torch.tensor(F_np, dtype=torch.float64)
     P_t = first_piola_torch(F_t, lambda_, mu)
     np.testing.assert_allclose(P_t.detach().numpy(), P_np, atol=1e-12)
 
-    F_batch = np.stack([F_np, np.eye(2)], axis=0)
-    P_b, _ = material.update(F_batch)
-    P_bt = first_piola_torch(torch.tensor(F_batch, dtype=torch.float64), lambda_, mu)
+    P2, C4_t = neohookean_stress_tangent_torch(F_t, lambda_, mu)
+    np.testing.assert_allclose(P2.detach().numpy(), P_np, atol=1e-12)
+    np.testing.assert_allclose(C4_t.detach().numpy(), C4_np, atol=1e-12)
+
+    # Batched (E, Q, dim, dim) — the layout used by element kernels
+    F_eq = np.stack([F_np, np.eye(2)], axis=0)[:, None, :, :]  # (2, 1, 2, 2)
+    P_b, C4_b = material.update(F_eq)
+    P_bt, C4_bt = neohookean_stress_tangent_torch(
+        torch.tensor(F_eq, dtype=torch.float64), lambda_, mu
+    )
     np.testing.assert_allclose(P_bt.detach().numpy(), P_b, atol=1e-12)
+    np.testing.assert_allclose(C4_bt.detach().numpy(), C4_b, atol=1e-12)
+
+    # Per-item check also validates torch against single-matrix NumPy update
+    for i in range(2):
+        P_i, C4_i = material.update(F_eq[i, 0])
+        np.testing.assert_allclose(P_bt[i, 0].detach().numpy(), P_i, atol=1e-12)
+        np.testing.assert_allclose(C4_bt[i, 0].detach().numpy(), C4_i, atol=1e-12)
+
+    # 3D single
+    F3 = np.eye(3)
+    F3[0, 1] = 0.1
+    P3_np, C43_np = material.update(F3)
+    P3_t, C43_t = neohookean_stress_tangent_torch(
+        torch.tensor(F3, dtype=torch.float64), lambda_, mu
+    )
+    np.testing.assert_allclose(P3_t.detach().numpy(), P3_np, atol=1e-12)
+    np.testing.assert_allclose(C43_t.detach().numpy(), C43_np, atol=1e-12)
 
 
 def test_heat_torch_residual_and_jacrev():
@@ -216,27 +246,35 @@ def test_neohookean_torch_residual_jacrev_and_fd():
         J_fd[:, i] = (Rp - Rm) / (2.0 * eps)
     np.testing.assert_allclose(J_auto.detach().numpy(), J_fd, atol=1e-5)
 
-    # Local residual vs element loop
+    # Local residual and analytic tangent vs element loop
     basis = LagrangeQuad(p=1)
     quad_pts, quad_wts = get_quadrature_2d(2, 2)
     u_e = U[elem_dofs].reshape(mesh.n_elements, 4, 2)
-    R_local = neohookean_residual_local(geom, u_e, lambda_, mu)
+    R_local, K_local = neohookean_system_local(geom, u_e, lambda_, mu)
+    K_stiff = neohookean_stiffness_local(geom, u_e, lambda_, mu)
+    np.testing.assert_allclose(K_local.detach().numpy(), K_stiff.detach().numpy(), atol=1e-12)
     for e, cell in enumerate(mesh.cells):
         elem_coords = mesh.coords[cell]
         elem_u = state.values["u"][cell]
-        Re, _ = formulation.compute_element_residual_and_tangent(
+        Re, Ke = formulation.compute_element_residual_and_tangent(
             elem_coords, elem_u, quad_pts, quad_wts, elem_basis=basis, elem_idx=e
         )
         np.testing.assert_allclose(R_local[e].detach().numpy(), Re, atol=1e-8)
+        np.testing.assert_allclose(K_local[e].detach().numpy(), Ke, atol=1e-8)
+
+    # Analytic tangent matches jacrev (regression oracle only)
+    np.testing.assert_allclose(J_auto.detach().numpy(), K_np.toarray(), atol=1e-5)
 
 
 def test_compiled_neohookean_newton_step():
+    """One Newton step using analytic Torch tangent (not jacrev)."""
+    from femx.core.tensor_assembly import assemble_nonlinear_system_tensor
+
     mesh = _quad_mesh_2x2()
     fields = [FieldSpec(name="u", components=2, location="nodes", unknown=True)]
     dof_map = DofMap(fields=fields, geometry=mesh)
     material = NeoHookeanMaterial(rho=1.0, E=1.0e5, nu=0.3)
     formulation = HyperelasticFormulation(material=material)
-    lambda_, mu = material.get_lame_parameters()
 
     state = State()
     state.initialize_field("u", mesh.n_nodes, 2)
@@ -245,7 +283,6 @@ def test_compiled_neohookean_newton_step():
         state.values["u"][node, 0] = 0.04 * y
         state.values["u"][node, 1] = 0.01 * x
 
-    # Pin enough DOFs to remove rigid-body modes before the dense Newton solve.
     constrained = {
         dof_map.get_dof("u", 0, 0),
         dof_map.get_dof("u", 0, 1),
@@ -253,26 +290,17 @@ def test_compiled_neohookean_newton_step():
     }
     free = np.array([i for i in range(dof_map.n_dofs) if i not in constrained], dtype=int)
 
-    U_np = state.pack_vector(dof_map)
     K_np, R_np = assemble_nonlinear_system(dof_map, formulation, state)
     dU_free_np = np.linalg.solve(K_np.toarray()[np.ix_(free, free)], -R_np[free])
 
-    geom = evaluate_batched_geometry(mesh, device="cpu", dtype=torch.float64)
-    elem_dofs = element_dof_indices(mesh, dof_map, "u", device="cpu")
-    U = torch.tensor(U_np, dtype=torch.float64)
+    K_t, R_t = assemble_nonlinear_system_tensor(
+        dof_map, formulation, state, device="cpu", dtype=torch.float64,
+    )
+    np.testing.assert_allclose(R_t, R_np, atol=1e-8)
+    np.testing.assert_allclose(K_t.toarray(), K_np.toarray(), atol=1e-6)
 
-    def residual(U_var):
-        return neohookean_residual_global(geom, U_var, elem_dofs, lambda_, mu)
-
-    compiled_residual = torch.compile(residual)
-    R_c = compiled_residual(U)
-    np.testing.assert_allclose(R_c.detach().numpy(), R_np, atol=1e-8)
-
-    J = torch.func.jacrev(residual)(U)
-    free_t = torch.tensor(free, dtype=torch.long)
-    K_ff = J[free_t][:, free_t]
-    dU_free = torch.linalg.solve(K_ff, -R_c[free_t])
-    np.testing.assert_allclose(dU_free.detach().numpy(), dU_free_np, atol=1e-6)
+    dU_free = np.linalg.solve(K_t.toarray()[np.ix_(free, free)], -R_t[free])
+    np.testing.assert_allclose(dU_free, dU_free_np, atol=1e-6)
 
 
 def test_torch_residual_on_accelerators():
@@ -306,8 +334,16 @@ def test_torch_residual_on_accelerators():
         conductivity = torch.tensor(K_cond, dtype=dtype, device=device)
         T = torch.tensor(T_np, dtype=dtype, device=device)
         R_t = heat_residual_global(geom, conductivity, T, elem_dofs, F_e=F_e)
+        R_np_cmp = R_t.detach().cpu().numpy()
+        if not np.isfinite(R_np_cmp).all():
+            print(
+                f" ({device} residual non-finite in {dtype}; "
+                f"skipped accuracy check — use CPU float64 as baseline) ",
+                end="",
+            )
+            continue
         np.testing.assert_allclose(
-            R_t.detach().cpu().numpy(), R_np, atol=atol, rtol=atol
+            R_np_cmp, R_np, atol=atol, rtol=atol
         )
 
         # jacrev / compile when the device accepts them

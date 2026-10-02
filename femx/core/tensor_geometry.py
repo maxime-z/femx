@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Tuple
 from femx.core.mesh import Mesh
-from femx.core.quadrature import get_quadrature_2d, get_quadrature_triangle
+from femx.core.quadrature import get_quadrature_2d, get_quadrature_triangle, get_quadrature_3d
 from femx.basis.lagrange import LagrangeQuad, LagrangeTriangle
 
 class BatchedGeometry:
@@ -36,6 +36,8 @@ def evaluate_batched_geometry(mesh: Mesh, device: str = "cpu", dtype: torch.dtyp
     Evaluates physics-independent batched geometric quantities across all elements.
     Returns BatchedGeometry object.
     """
+    from femx.basis.lagrange import LagrangeHex
+
     coords = torch.tensor(mesh.coords, dtype=dtype, device=device) # (N, dim)
     cells = torch.tensor(mesh.cells, dtype=torch.int64, device=device)     # (E, nen)
     E = mesh.n_elements
@@ -44,7 +46,14 @@ def evaluate_batched_geometry(mesh: Mesh, device: str = "cpu", dtype: torch.dtyp
     
     X = coords[cells] # (E, nen, dim)
     
-    if nen == 4:
+    if nen == 8 and dim == 3:
+        pts_np, wts_np = get_quadrature_3d(2, 2, 2)
+        Q = len(pts_np)
+        basis = LagrangeHex(p=1)
+        B_hat_list = [basis.evaluate_shape_functions(pt) for pt in pts_np]
+        dB_hat_list = [basis.evaluate_shape_derivatives(pt) for pt in pts_np]
+        dB_hat_q = torch.tensor(np.array([dB.T for dB in dB_hat_list]), dtype=dtype, device=device)
+    elif nen == 4:
         # Q1 Quad: 2x2 quadrature (Q=4)
         pts_np, wts_np = get_quadrature_2d(2, 2)
         Q = len(pts_np)
@@ -66,7 +75,7 @@ def evaluate_batched_geometry(mesh: Mesh, device: str = "cpu", dtype: torch.dtyp
     
     # Batched Jacobians J[e, q, c, d] = sum_a ( X[e, a, c] * dB_hat_q[q, a, d] )
     J = torch.einsum('eac,qad->eqcd', X, dB_hat_q)
-    detJ = torch.linalg.det(J)
+    detJ = torch.linalg.det(J.contiguous())
     J_inv_T = torch.linalg.inv(J).transpose(-1, -2)
     
     # Physical shape gradients G[e, q, a, c] = sum_d ( J_inv_T[e, q, c, d] * dB_hat_q[q, a, d] )

@@ -14,7 +14,7 @@ import torch
 from femx.core.dofs import DofMap
 from femx.core.mesh import Mesh
 from femx.core.tensor_geometry import BatchedGeometry
-from femx.materials.hyperelastic import first_piola_torch
+from femx.materials.hyperelastic import first_piola_torch, neohookean_stress_tangent_torch
 
 
 def element_dof_indices(
@@ -165,6 +165,13 @@ def elasticity_residual_global(
     return scatter_element_residual(R_e, elem_dofs, U.shape[0])
 
 
+def _reshape_u_mat(geom: BatchedGeometry, u_e: torch.Tensor) -> torch.Tensor:
+    """Normalize element displacements to ``(E, nen, dim)``."""
+    if u_e.ndim == 2:
+        return u_e.reshape(geom.E, geom.nen, geom.dim)
+    return u_e
+
+
 def neohookean_residual_local(
     geom: BatchedGeometry,
     u_e: torch.Tensor,
@@ -176,10 +183,7 @@ def neohookean_residual_local(
 
     ``u_e`` has shape ``(E, nen, dim)`` or flat ``(E, nen*dim)``.
     """
-    if u_e.ndim == 2:
-        u_mat = u_e.reshape(geom.E, geom.nen, geom.dim)
-    else:
-        u_mat = u_e
+    u_mat = _reshape_u_mat(geom, u_e)
 
     # H[e,q,i,j] = sum_a u[e,a,i] * G[e,q,a,j]
     H = torch.einsum("eai,eqaj->eqij", u_mat, geom.G)
@@ -195,6 +199,67 @@ def neohookean_residual_local(
     return R_e
 
 
+def neohookean_stiffness_local(
+    geom: BatchedGeometry,
+    u_e: torch.Tensor,
+    lambda_: float,
+    mu: float,
+) -> torch.Tensor:
+    """Element Neo-Hookean analytic tangent, shape ``(E, nen*dim, nen*dim)``."""
+    u_mat = _reshape_u_mat(geom, u_e)
+    H = torch.einsum("eai,eqaj->eqij", u_mat, geom.G)
+    eye = torch.eye(geom.dim, dtype=geom.G.dtype, device=geom.G.device)
+    F = eye + H
+    _, C4 = neohookean_stress_tangent_torch(F, lambda_, mu)
+    k_dofs = geom.nen * geom.dim
+    K_tensor = torch.einsum(
+        "q,eq,eqaj,eqijkl,eqbl->eaibk",
+        geom.W_hat,
+        geom.detJ,
+        geom.G,
+        C4,
+        geom.G,
+    )
+    return K_tensor.reshape(geom.E, k_dofs, k_dofs)
+
+
+def neohookean_system_local(
+    geom: BatchedGeometry,
+    u_e: torch.Tensor,
+    lambda_: float,
+    mu: float,
+    F_e: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fused local Neo-Hookean residual and analytic tangent.
+
+    Returns:
+        R_e: shape ``(E, nen*dim)``
+        K_e: shape ``(E, nen*dim, nen*dim)``
+    """
+    u_mat = _reshape_u_mat(geom, u_e)
+    H = torch.einsum("eai,eqaj->eqij", u_mat, geom.G)
+    eye = torch.eye(geom.dim, dtype=geom.G.dtype, device=geom.G.device)
+    F = eye + H
+    P, C4 = neohookean_stress_tangent_torch(F, lambda_, mu)
+
+    R_int = torch.einsum("q,eq,eqij,eqaj->eai", geom.W_hat, geom.detJ, P, geom.G)
+    R_e = R_int.reshape(geom.E, geom.nen * geom.dim)
+    if F_e is not None:
+        R_e = R_e - F_e
+
+    k_dofs = geom.nen * geom.dim
+    K_tensor = torch.einsum(
+        "q,eq,eqaj,eqijkl,eqbl->eaibk",
+        geom.W_hat,
+        geom.detJ,
+        geom.G,
+        C4,
+        geom.G,
+    )
+    K_e = K_tensor.reshape(geom.E, k_dofs, k_dofs)
+    return R_e, K_e
+
+
 def neohookean_residual_global(
     geom: BatchedGeometry,
     U: torch.Tensor,
@@ -207,3 +272,43 @@ def neohookean_residual_global(
     u_e = gather_element_dofs(U, elem_dofs)
     R_e = neohookean_residual_local(geom, u_e, lambda_, mu, F_e=F_e)
     return scatter_element_residual(R_e, elem_dofs, U.shape[0])
+
+
+def scatter_stiffness_global(
+    K_local: torch.Tensor,
+    routing,
+) -> torch.Tensor:
+    """Reduce local stiffnesses to CSR nonzero values via ``S_mat`` SpMM."""
+    m_K = K_local.reshape(-1, 1)
+    return torch.sparse.mm(routing.S_mat, m_K).squeeze(1)
+
+
+def scatter_residual_global(
+    R_local: torch.Tensor,
+    routing,
+) -> torch.Tensor:
+    """Reduce local residuals to a global vector via ``S_vec`` SpMM."""
+    m_R = R_local.reshape(-1, 1)
+    return torch.sparse.mm(routing.S_vec, m_R).squeeze(1)
+
+
+def neohookean_system_global(
+    geom: BatchedGeometry,
+    U: torch.Tensor,
+    elem_dofs: torch.Tensor,
+    routing,
+    lambda_: float,
+    mu: float,
+    F_e: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Global Neo-Hookean residual and CSR nonzero tangent values.
+
+    Returns:
+        R: shape ``(n_dofs,)``
+        K_values: shape ``(N_nnz,)`` aligned with ``routing`` CSR structure
+    """
+    u_e = gather_element_dofs(U, elem_dofs)
+    R_e, K_e = neohookean_system_local(geom, u_e, lambda_, mu, F_e=F_e)
+    R = scatter_residual_global(R_e, routing)
+    K_values = scatter_stiffness_global(K_e, routing)
+    return R, K_values

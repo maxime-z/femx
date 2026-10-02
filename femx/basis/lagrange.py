@@ -184,36 +184,48 @@ class LagrangeTriangle(ElementBasis):
 
 class LagrangeHex(ElementBasis):
     """
-    Trilinear 8-node hexahedral Lagrange element (H1).
-    Reference domain [-1, 1]^3.
+    Arbitrary-order hexahedral Lagrange element on [-1, 1]^3.
 
-    Node ordering:
+    For ``p=1`` the eight nodes keep the VTK hex ordering used by existing tests:
+
         7-------6
        /|      /|
       4-------5 |
       | 3-----|-2
       |/      |/
       0-------1
+
+    For ``p > 1`` nodes are the tensor-product grid with index ``i + (p+1)*j + (p+1)^2*k``
+    where ``i,j,k`` run over the 1-D Lagrange nodes in ``xi, eta, zeta``.
     """
 
     def __init__(self, p: int = 1):
-        if p != 1:
-            raise ValueError(f"LagrangeHex currently supports p=1 only, got {p}")
+        if p < 1:
+            raise ValueError(f"Polynomial degree p must be >= 1, got {p}")
         self.p = p
-        self._ref_nodes = array([
-            [-1.0, -1.0, -1.0],
-            [ 1.0, -1.0, -1.0],
-            [ 1.0,  1.0, -1.0],
-            [-1.0,  1.0, -1.0],
-            [-1.0, -1.0,  1.0],
-            [ 1.0, -1.0,  1.0],
-            [ 1.0,  1.0,  1.0],
-            [-1.0,  1.0,  1.0],
-        ])
+        self._nodes_1d = np.linspace(-1.0, 1.0, p + 1)
+        if p == 1:
+            self._ref_nodes = array([
+                [-1.0, -1.0, -1.0],
+                [ 1.0, -1.0, -1.0],
+                [ 1.0,  1.0, -1.0],
+                [-1.0,  1.0, -1.0],
+                [-1.0, -1.0,  1.0],
+                [ 1.0, -1.0,  1.0],
+                [ 1.0,  1.0,  1.0],
+                [-1.0,  1.0,  1.0],
+            ])
+        else:
+            pts = []
+            for k in range(p + 1):
+                for j in range(p + 1):
+                    for i in range(p + 1):
+                        pts.append([self._nodes_1d[i], self._nodes_1d[j], self._nodes_1d[k]])
+            self._ref_nodes = array(pts)
 
     @property
     def n_dofs_per_element(self) -> int:
-        return 8
+        return (self.p + 1) ** 3
 
     @property
     def dim(self) -> int:
@@ -221,22 +233,38 @@ class LagrangeHex(ElementBasis):
 
     def evaluate_shape_functions(self, ref_coords: ndarray) -> ndarray:
         xi, eta, zeta = ref_coords[0], ref_coords[1], ref_coords[2]
-        nodes = self._ref_nodes
-        return 0.125 * array([
-            (1.0 + nodes[i, 0] * xi) * (1.0 + nodes[i, 1] * eta) * (1.0 + nodes[i, 2] * zeta)
-            for i in range(8)
-        ])
+        if self.p == 1:
+            nodes = self._ref_nodes
+            return 0.125 * array([
+                (1.0 + nodes[i, 0] * xi) * (1.0 + nodes[i, 1] * eta) * (1.0 + nodes[i, 2] * zeta)
+                for i in range(8)
+            ])
+        L_xi = self._eval_1d_lagrange(xi)
+        L_eta = self._eval_1d_lagrange(eta)
+        L_zeta = self._eval_1d_lagrange(zeta)
+        return np.einsum("k,j,i->kji", L_zeta, L_eta, L_xi).ravel()
 
     def evaluate_shape_derivatives(self, ref_coords: ndarray) -> ndarray:
         xi, eta, zeta = ref_coords[0], ref_coords[1], ref_coords[2]
-        nodes = self._ref_nodes
-        dN = zeros((3, 8))
-        for i in range(8):
-            sx, sy, sz = nodes[i]
-            dN[0, i] = 0.125 * sx * (1.0 + sy * eta) * (1.0 + sz * zeta)
-            dN[1, i] = 0.125 * sy * (1.0 + sx * xi) * (1.0 + sz * zeta)
-            dN[2, i] = 0.125 * sz * (1.0 + sx * xi) * (1.0 + sy * eta)
-        return dN
+        if self.p == 1:
+            nodes = self._ref_nodes
+            dN = zeros((3, 8))
+            for i in range(8):
+                sx, sy, sz = nodes[i]
+                dN[0, i] = 0.125 * sx * (1.0 + sy * eta) * (1.0 + sz * zeta)
+                dN[1, i] = 0.125 * sy * (1.0 + sx * xi) * (1.0 + sz * zeta)
+                dN[2, i] = 0.125 * sz * (1.0 + sx * xi) * (1.0 + sy * eta)
+            return dN
+        L_xi = self._eval_1d_lagrange(xi)
+        dL_xi = self._eval_1d_lagrange_derivatives(xi)
+        L_eta = self._eval_1d_lagrange(eta)
+        dL_eta = self._eval_1d_lagrange_derivatives(eta)
+        L_zeta = self._eval_1d_lagrange(zeta)
+        dL_zeta = self._eval_1d_lagrange_derivatives(zeta)
+        dN_dxi = np.einsum("k,j,i->kji", L_zeta, L_eta, dL_xi).ravel()
+        dN_deta = np.einsum("k,j,i->kji", L_zeta, dL_eta, L_xi).ravel()
+        dN_dzeta = np.einsum("k,j,i->kji", dL_zeta, L_eta, L_xi).ravel()
+        return np.vstack([dN_dxi, dN_deta, dN_dzeta])
 
     def compute_mapping(self, ref_coords: ndarray, elem_coords: ndarray) -> Tuple[ndarray, ndarray, float]:
         N = self.evaluate_shape_functions(ref_coords)
@@ -252,5 +280,39 @@ class LagrangeHex(ElementBasis):
         return N, dN_dphys, detJ
 
     def get_default_quadrature(self) -> Tuple[ndarray, ndarray]:
-        return get_quadrature_3d(2, 2, 2)
+        n = self.p + 1
+        return get_quadrature_3d(n, n, n)
+
+    def _eval_1d_lagrange(self, x: float) -> ndarray:
+        nodes = self._nodes_1d
+        n = len(nodes)
+        vals = np.ones(n)
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    vals[i] *= (x - nodes[j]) / (nodes[i] - nodes[j])
+        return vals
+
+    def _eval_1d_lagrange_derivatives(self, x: float) -> ndarray:
+        nodes = self._nodes_1d
+        n = len(nodes)
+        dvals = np.zeros(n)
+        for i in range(n):
+            for k in range(n):
+                if k != i:
+                    term = 1.0 / (nodes[i] - nodes[k])
+                    for j in range(n):
+                        if j != i and j != k:
+                            term *= (x - nodes[j]) / (nodes[i] - nodes[j])
+                    dvals[i] += term
+        return dvals
+
+
+def hex_degree_from_nen(nen: int) -> int:
+    """Infer Lagrange hex polynomial degree from the number of element nodes."""
+    root = int(round(nen ** (1.0 / 3.0)))
+    if root ** 3 != nen or root < 2:
+        raise ValueError(f"Cannot infer LagrangeHex degree from nen={nen}")
+    return root - 1
+
 

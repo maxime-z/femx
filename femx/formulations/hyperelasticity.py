@@ -159,8 +159,12 @@ class MixedHyperelasticFormulation(Formulation):
         Ke = zeros((n_dofs_total, n_dofs_total))
 
         if elem_basis_u is None:
-            from femx.basis.lagrange import LagrangeQuad
-            elem_basis_u = LagrangeQuad(p=1)
+            elem_basis_u = kwargs.get("elem_basis")
+        if elem_basis_u is None:
+            raise ValueError(
+                "elem_basis_u (or elem_basis) is required; the assembler must provide "
+                "LagrangeQuad/Hex or NurbsBasis"
+            )
         if elem_basis_p is None:
             elem_basis_p = elem_basis_u
 

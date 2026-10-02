@@ -60,24 +60,60 @@ class NeoHookeanMaterial(Material):
                  
             return P, C4
         else:
-            # Batched calculation over (n_elems, n_gps, dim, dim)
+            # Batched calculation over (..., dim, dim), typically (n_elems, n_gps, dim, dim)
             dim = F.shape[-1]
-            J = np.linalg.det(F) # shape (n_elems, n_gps)
+            J = np.linalg.det(F)  # shape (...)
             if np.any(J <= 0):
                 raise ValueError("Inverted element detected: J <= 0")
-            
-            F_inv_T = np.swapaxes(np.linalg.inv(F), -1, -2) # shape (n_elems, n_gps, dim, dim)
-            lnJ = np.log(J)[..., None, None] # shape (n_elems, n_gps, 1, 1)
-            
-            P = mu * F + (lambda_ * lnJ - mu) * F_inv_T
-            
+
+            F_inv_T = np.swapaxes(np.linalg.inv(F), -1, -2)
+            lnJ = np.log(J)
+            lnJ_broad = lnJ[..., None, None]
+            P = mu * F + (lambda_ * lnJ_broad - mu) * F_inv_T
+
             delta = eye(dim)
             term1 = mu * np.einsum('ik,jl->ijkl', delta, delta)
             term2 = lambda_ * np.einsum('...ij,...kl->...ijkl', F_inv_T, F_inv_T)
-            term3 = (mu - lambda_ * lnJ[..., 0]) * np.einsum('...kj,...il->...ijkl', F_inv_T, F_inv_T)
-            
+            coeff = (mu - lambda_ * lnJ)[..., None, None, None, None]
+            term3 = coeff * np.einsum('...kj,...il->...ijkl', F_inv_T, F_inv_T)
+
             C4 = term1 + term2 + term3
             return P, C4
+
+
+def neohookean_stress_tangent_torch(F, lambda_: float, mu: float):
+    """Batched First Piola stress and analytic ``C4 = dP/dF`` (torch).
+
+    ``F`` may be ``(dim, dim)`` or batched ``(..., dim, dim)``. Matches
+    :meth:`NeoHookeanMaterial.update`.
+
+    Returns:
+        P: same shape as ``F``
+        C4: shape ``(*F.shape[:-2], dim, dim, dim, dim)``
+    """
+    import torch
+
+    J = torch.linalg.det(F.contiguous())
+    if torch.any(J <= 0):
+        raise ValueError("Inverted element detected: J <= 0")
+    F_inv_T = torch.linalg.inv(F).transpose(-1, -2)
+    lnJ = torch.log(J)
+    lnJ_broad = lnJ
+    while lnJ_broad.ndim < F.ndim:
+        lnJ_broad = lnJ_broad.unsqueeze(-1)
+    P = mu * F + (lambda_ * lnJ_broad - mu) * F_inv_T
+
+    dim = F.shape[-1]
+    delta = torch.eye(dim, dtype=F.dtype, device=F.device)
+    term1 = mu * torch.einsum("ik,jl->ijkl", delta, delta)
+    term2 = lambda_ * torch.einsum("...ij,...kl->...ijkl", F_inv_T, F_inv_T)
+    # coeff shape (...); expand to (..., 1, 1, 1, 1) for C4 broadcast
+    coeff = mu - lambda_ * lnJ
+    for _ in range(4):
+        coeff = coeff.unsqueeze(-1)
+    term3 = coeff * torch.einsum("...kj,...il->...ijkl", F_inv_T, F_inv_T)
+    C4 = term1 + term2 + term3
+    return P, C4
 
 
 def first_piola_torch(F, lambda_: float, mu: float):
@@ -86,14 +122,6 @@ def first_piola_torch(F, lambda_: float, mu: float):
     ``F`` may be ``(dim, dim)`` or batched ``(..., dim, dim)``. Matches
     :meth:`NeoHookeanMaterial.update` without returning the analytic tangent.
     """
-    import torch
-
-    J = torch.linalg.det(F)
-    if torch.any(J <= 0):
-        raise ValueError("Inverted element detected: J <= 0")
-    F_inv_T = torch.linalg.inv(F).transpose(-1, -2)
-    lnJ = torch.log(J)
-    while lnJ.ndim < F.ndim:
-        lnJ = lnJ.unsqueeze(-1)
-    return mu * F + (lambda_ * lnJ - mu) * F_inv_T
+    P, _ = neohookean_stress_tangent_torch(F, lambda_, mu)
+    return P
 

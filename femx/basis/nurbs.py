@@ -3,7 +3,7 @@ from typing import Tuple, List
 from femx.backends.numpy_backend import ndarray, array, invert_matrix, determinant
 from femx.basis.element import ElementBasis
 from femx.geometry.nurbs import NurbsPatch
-from femx.core.quadrature import get_quadrature_2d
+from femx.core.quadrature import get_quadrature_2d, get_quadrature_3d
 
 def find_span(n: int, p: int, u: float, knots: ndarray) -> int:
     """Find the knot span index for coordinate u."""
@@ -125,21 +125,30 @@ class NurbsQuadratureCache:
 
 class NurbsBasis(ElementBasis):
     """
-    NURBS Isogeometric Element Basis.
-    Wraps a NurbsPatch and active knot span (span_u, span_v).
-    Optional ``cache`` (NurbsQuadratureCache) serves fixed-geometry Gauss points.
+    NURBS Isogeometric Element Basis for a knot-span element.
+    Optional ``cache`` (NurbsQuadratureCache) serves fixed-geometry Gauss points on 2D patches.
     """
-    def __init__(self, patch: NurbsPatch, span_u: int = 0, span_v: int = 0, cache: NurbsQuadratureCache = None):
+    def __init__(
+        self,
+        patch: NurbsPatch,
+        span_u: int = 0,
+        span_v: int = 0,
+        span_w: int = None,
+        cache: NurbsQuadratureCache = None,
+    ):
         self.patch = patch
         self.span_u = span_u
         self.span_v = span_v
+        self.span_w = span_w
         self.cache = cache
-
         self.p_u = patch.degrees[0]
         self.p_v = patch.degrees[1]
+        self.p_w = patch.degrees[2] if patch.parametric_dim == 3 else None
 
     @property
     def n_dofs_per_element(self) -> int:
+        if self.patch.parametric_dim == 3:
+            return (self.p_u + 1) * (self.p_v + 1) * (self.p_w + 1)
         return (self.p_u + 1) * (self.p_v + 1)
 
     @property
@@ -155,24 +164,33 @@ class NurbsBasis(ElementBasis):
         return dR_dphys
 
     def compute_mapping(self, ref_coords: ndarray, elem_coords: ndarray = None) -> Tuple[ndarray, ndarray, float]:
-        if self.cache is not None:
+        if self.cache is not None and self.patch.parametric_dim == 2:
             cached = self.cache.get(self.span_u, self.span_v, ref_coords)
             if cached is not None:
                 return cached
-        return compute_nurbs_mapping(ref_coords, self.patch, self.span_u, self.span_v)
+        return compute_nurbs_mapping(
+            ref_coords, self.patch, self.span_u, self.span_v, self.span_w
+        )
 
     def get_default_quadrature(self) -> Tuple[ndarray, ndarray]:
         if self.cache is not None:
             return self.cache.quad_pts, self.cache.quad_wts
-        nu = self.p_u + 1
-        nv = self.p_v + 1
-        return get_quadrature_2d(nu, nv)
+        if self.patch.parametric_dim == 3:
+            return get_quadrature_3d(self.p_u + 1, self.p_v + 1, self.p_w + 1)
+        return get_quadrature_2d(self.p_u + 1, self.p_v + 1)
 
 
 def compute_nurbs_mapping_full(
-    gp_ref: ndarray, patch: NurbsPatch, span_u: int, span_v: int
+    gp_ref: ndarray,
+    patch: NurbsPatch,
+    span_u: int,
+    span_v: int,
+    span_w: int = None,
 ) -> Tuple[ndarray, ndarray, ndarray, float]:
-    """Return R, dR_dparam (2, nen), dR_dphys (2, nen), detJ."""
+    """Return R, dR_dparam (n_param, nen), dR_dphys (n_param, nen), detJ."""
+    if patch.parametric_dim == 3:
+        return _compute_nurbs_mapping_full_3d(gp_ref, patch, span_u, span_v, span_w)
+
     p_u = patch.degrees[0]
     p_v = patch.degrees[1]
     knots_u = patch.knot_vectors[0].knots
@@ -242,9 +260,94 @@ def compute_nurbs_mapping_full(
     return R, dR_dparam, dR_dphys, detJ
 
 
-def compute_nurbs_mapping(gp_ref: ndarray, patch: NurbsPatch, span_u: int, span_v: int) -> Tuple[ndarray, ndarray, float]:
+def _compute_nurbs_mapping_full_3d(
+    gp_ref: ndarray,
+    patch: NurbsPatch,
+    span_u: int,
+    span_v: int,
+    span_w: int,
+) -> Tuple[ndarray, ndarray, ndarray, float]:
+    if span_w is None:
+        raise ValueError("span_w is required for a trivariate NURBS patch")
+    p_u, p_v, p_w = patch.degrees
+    knots_u = patch.knot_vectors[0].knots
+    knots_v = patch.knot_vectors[1].knots
+    knots_w = patch.knot_vectors[2].knots
+
+    u1, u2 = knots_u[span_u], knots_u[span_u + 1]
+    v1, v2 = knots_v[span_v], knots_v[span_v + 1]
+    w1, w2 = knots_w[span_w], knots_w[span_w + 1]
+
+    hu = 0.5 * (u2 - u1)
+    hv = 0.5 * (v2 - v1)
+    hw = 0.5 * (w2 - w1)
+
+    u = hu * gp_ref[0] + 0.5 * (u2 + u1)
+    v = hv * gp_ref[1] + 0.5 * (v2 + v1)
+    ww = hw * gp_ref[2] + 0.5 * (w2 + w1)
+    detJ_PR = hu * hv * hw
+
+    ders_u = ders_basis_functions(span_u, u, p_u, 1, knots_u)
+    ders_v = ders_basis_functions(span_v, v, p_v, 1, knots_v)
+    ders_w = ders_basis_functions(span_w, ww, p_w, 1, knots_w)
+
+    n_local = (p_u + 1) * (p_v + 1) * (p_w + 1)
+    B = np.zeros(n_local)
+    dB_du = np.zeros(n_local)
+    dB_dv = np.zeros(n_local)
+    dB_dw = np.zeros(n_local)
+    w_local = np.zeros(n_local)
+    elem_coords = np.zeros((n_local, patch.physical_dim))
+
+    local_idx = 0
+    for k in range(p_w + 1):
+        idx_w = span_w - p_w + k
+        N_w = ders_w[0, k]
+        dN_dw = ders_w[1, k]
+        for j in range(p_v + 1):
+            idx_v = span_v - p_v + j
+            N_v = ders_v[0, j]
+            dN_dv = ders_v[1, j]
+            for i in range(p_u + 1):
+                idx_u = span_u - p_u + i
+                N_u = ders_u[0, i]
+                dN_du = ders_u[1, i]
+                B[local_idx] = N_u * N_v * N_w
+                dB_du[local_idx] = dN_du * N_v * N_w
+                dB_dv[local_idx] = N_u * dN_dv * N_w
+                dB_dw[local_idx] = N_u * N_v * dN_dw
+                w_local[local_idx] = patch.weights[idx_u, idx_v, idx_w]
+                elem_coords[local_idx] = patch.control_points[idx_u, idx_v, idx_w]
+                local_idx += 1
+
+    W = np.dot(w_local, B)
+    dW_du = np.dot(w_local, dB_du)
+    dW_dv = np.dot(w_local, dB_dv)
+    dW_dw = np.dot(w_local, dB_dw)
+    R = (w_local * B) / W
+    dR_du = w_local * (dB_du * W - B * dW_du) / (W * W)
+    dR_dv = w_local * (dB_dv * W - B * dW_dv) / (W * W)
+    dR_dw = w_local * (dB_dw * W - B * dW_dw) / (W * W)
+    dR_dparam = np.vstack([dR_du, dR_dv, dR_dw])
+    J_PP = dR_dparam @ elem_coords
+    detJ_PP = determinant(J_PP)
+    detJ = detJ_PP * detJ_PR
+    if detJ <= 0.0:
+        raise ValueError(f"Jacobian determinant is non-positive: {detJ}")
+    invJ_PP = invert_matrix(J_PP)
+    dR_dphys = invJ_PP @ dR_dparam
+    return R, dR_dparam, dR_dphys, detJ
+
+
+def compute_nurbs_mapping(
+    gp_ref: ndarray,
+    patch: NurbsPatch,
+    span_u: int,
+    span_v: int,
+    span_w: int = None,
+) -> Tuple[ndarray, ndarray, float]:
     """Compute reference-to-physical mapping for a NURBS element span."""
-    R, _, dR_dphys, detJ = compute_nurbs_mapping_full(gp_ref, patch, span_u, span_v)
+    R, _, dR_dphys, detJ = compute_nurbs_mapping_full(gp_ref, patch, span_u, span_v, span_w)
     return R, dR_dphys, detJ
 
 def get_quadrature_spans(patch: NurbsPatch) -> List[Tuple[Tuple[int, ...], Tuple[Tuple[float, float], ...]]]:

@@ -120,12 +120,20 @@ class NurbsPatch:
         return self.degrees[1]
 
     @property
+    def p_w(self) -> int:
+        return self.degrees[2]
+
+    @property
     def knots_u(self) -> np.ndarray:
         return self.knot_vectors[0].knots
 
     @property
     def knots_v(self) -> np.ndarray:
         return self.knot_vectors[1].knots
+
+    @property
+    def knots_w(self) -> np.ndarray:
+        return self.knot_vectors[2].knots
 
     @property
     def n_cp_u(self) -> int:
@@ -136,27 +144,66 @@ class NurbsPatch:
         return self.control_points.shape[1]
 
     @property
+    def n_cp_w(self) -> int:
+        return self.control_points.shape[2]
+
+    @property
     def n_control_points(self) -> int:
         return int(np.prod(self.control_points.shape[:-1]))
 
-    def get_element_spans(self) -> List[Tuple[int, int]]:
-        spans = []
-        for i_u in range(self.p_u, len(self.knots_u) - self.p_u - 1):
-            for i_v in range(self.p_v, len(self.knots_v) - self.p_v - 1):
-                if (self.knots_u[i_u + 1] > self.knots_u[i_u] and
-                    self.knots_v[i_v + 1] > self.knots_v[i_v]):
-                    spans.append((i_u, i_v))
-        return spans
+    def get_element_spans(self) -> List[Tuple[int, ...]]:
+        if self.parametric_dim == 2:
+            spans = []
+            for i_u in range(self.p_u, len(self.knots_u) - self.p_u - 1):
+                for i_v in range(self.p_v, len(self.knots_v) - self.p_v - 1):
+                    if (self.knots_u[i_u + 1] > self.knots_u[i_u] and
+                        self.knots_v[i_v + 1] > self.knots_v[i_v]):
+                        spans.append((i_u, i_v))
+            return spans
+        if self.parametric_dim == 3:
+            spans = []
+            for i_u in range(self.p_u, len(self.knots_u) - self.p_u - 1):
+                for i_v in range(self.p_v, len(self.knots_v) - self.p_v - 1):
+                    for i_w in range(self.p_w, len(self.knots_w) - self.p_w - 1):
+                        if (self.knots_u[i_u + 1] > self.knots_u[i_u] and
+                            self.knots_v[i_v + 1] > self.knots_v[i_v] and
+                            self.knots_w[i_w + 1] > self.knots_w[i_w]):
+                            spans.append((i_u, i_v, i_w))
+            return spans
+        raise ValueError(f"get_element_spans supports parametric_dim 2 or 3, got {self.parametric_dim}")
 
-    def get_element_control_points(self, span_u: int, span_v: int) -> np.ndarray:
-        indices = []
-        for j in range(self.p_v + 1):
-            idx_v = span_v - self.p_v + j
-            for i in range(self.p_u + 1):
-                idx_u = span_u - self.p_u + i
-                idx_1d = idx_u + idx_v * self.n_cp_u
-                indices.append(idx_1d)
-        return np.array(indices, dtype=int)
+    def get_element_control_points(self, span_u: int, span_v: int, span_w: int = None) -> np.ndarray:
+        if self.parametric_dim == 2:
+            indices = []
+            for j in range(self.p_v + 1):
+                idx_v = span_v - self.p_v + j
+                for i in range(self.p_u + 1):
+                    idx_u = span_u - self.p_u + i
+                    indices.append(idx_u + idx_v * self.n_cp_u)
+            return np.array(indices, dtype=int)
+        if self.parametric_dim == 3:
+            if span_w is None:
+                raise ValueError("span_w is required for a trivariate NURBS patch")
+            indices = []
+            for k in range(self.p_w + 1):
+                idx_w = span_w - self.p_w + k
+                for j in range(self.p_v + 1):
+                    idx_v = span_v - self.p_v + j
+                    for i in range(self.p_u + 1):
+                        idx_u = span_u - self.p_u + i
+                        indices.append(
+                            idx_u + idx_v * self.n_cp_u + idx_w * self.n_cp_u * self.n_cp_v
+                        )
+            return np.array(indices, dtype=int)
+        raise ValueError(f"get_element_control_points supports parametric_dim 2 or 3")
+
+    def flatten_control_points(self) -> np.ndarray:
+        """Flatten control points to match ``get_element_control_points`` indices."""
+        if self.parametric_dim == 2:
+            return self.control_points.transpose(1, 0, 2).reshape((-1, self.physical_dim))
+        if self.parametric_dim == 3:
+            return self.control_points.transpose(2, 1, 0, 3).reshape((-1, self.physical_dim))
+        raise ValueError(f"flatten_control_points supports parametric_dim 2 or 3")
         
     def get_weighted_control_points(self) -> np.ndarray:
         Pw = np.zeros(self.weights.shape + (self.physical_dim + 1,), dtype=np.float64)
